@@ -21,7 +21,8 @@ workflows:
         - push
 
     scripts:
-      - name: Set build version
+
+      - name: Set app version
         script: |
           cd $CM_BUILD_DIR
 
@@ -30,13 +31,44 @@ workflows:
 
       - name: Install CocoaPods
         script: |
+          cd $CM_BUILD_DIR
           pod install || true
+
+      - name: Create Export Options
+        script: |
+          cd $CM_BUILD_DIR
+
+          cat > export_options.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+
+              <key>signingStyle</key>
+              <string>automatic</string>
+
+              <key>stripSwiftSymbols</key>
+              <true/>
+
+              <key>compileBitcode</key>
+              <false/>
+
+              <key>uploadBitcode</key>
+              <false/>
+          </dict>
+          </plist>
+          EOF
 
       - name: Build IPA
         script: |
+          cd $CM_BUILD_DIR
+
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME"
+            --scheme "$XCODE_SCHEME" \
+            --export-options-plist "$CM_BUILD_DIR/export_options.plist"
 
     artifacts:
       - build/ios/ipa/*.ipa
