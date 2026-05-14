@@ -27,6 +27,12 @@ workflows:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.2" SnapShe/Info.plist || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" SnapShe/Info.plist || true
 
+      - name: Use signing profiles
+        script: |
+          cd $CM_BUILD_DIR
+          xcode-project use-profiles \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT"
+
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
@@ -34,30 +40,12 @@ workflows:
             pod install
           fi
 
-      - name: Create Export Options
-        script: |
-          cd $CM_BUILD_DIR
-          python3 - <<'PY'
-          import plistlib
-          data = {
-              "method": "app-store-connect",
-              "signingStyle": "automatic",
-              "stripSwiftSymbols": True,
-              "compileBitcode": False,
-              "uploadBitcode": False
-          }
-          with open("export_options.plist", "wb") as f:
-              plistlib.dump(data, f)
-          PY
-          plutil -lint export_options.plist
-
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --export-options-plist "$CM_BUILD_DIR/export_options.plist"
+            --scheme "$XCODE_SCHEME"
 
     artifacts:
       - build/ios/ipa/*.ipa
