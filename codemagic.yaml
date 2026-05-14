@@ -2,6 +2,9 @@ workflows:
   ios-workflow:
     name: SnapShe iOS Build
 
+    integrations:
+      app_store_connect: codemagic
+
     environment:
       xcode: latest
       cocoapods: default
