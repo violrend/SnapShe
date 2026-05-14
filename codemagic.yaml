@@ -21,50 +21,39 @@ workflows:
         - push
 
     scripts:
-
       - name: Set app version
         script: |
           cd $CM_BUILD_DIR
-
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.2" SnapShe/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" SnapShe/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.2" SnapShe/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" SnapShe/Info.plist || true
 
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
-          pod install || true
+          if [ -f "Podfile" ]; then
+            pod install
+          fi
 
       - name: Create Export Options
         script: |
           cd $CM_BUILD_DIR
-
-          cat > export_options.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store-connect</string>
-
-              <key>signingStyle</key>
-              <string>automatic</string>
-
-              <key>stripSwiftSymbols</key>
-              <true/>
-
-              <key>compileBitcode</key>
-              <false/>
-
-              <key>uploadBitcode</key>
-              <false/>
-          </dict>
-          </plist>
-          EOF
+          python3 - <<'PY'
+          import plistlib
+          data = {
+              "method": "app-store-connect",
+              "signingStyle": "automatic",
+              "stripSwiftSymbols": True,
+              "compileBitcode": False,
+              "uploadBitcode": False
+          }
+          with open("export_options.plist", "wb") as f:
+              plistlib.dump(data, f)
+          PY
+          plutil -lint export_options.plist
 
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
-
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
@@ -79,6 +68,5 @@ workflows:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-
         submit_to_testflight: true
         submit_to_app_store: false
