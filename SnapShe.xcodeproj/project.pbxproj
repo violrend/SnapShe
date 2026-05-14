@@ -1,0 +1,375 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		246BADC60B3D5E8390B7E772 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2144343DC195CBBA66CF3FD /* ProfileView.swift */; };
+		24ABCC24F44857B9AD9B8686 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5551A91393A5010AFD83746 /* AuthManager.swift */; };
+		2C35DB747B8D5F988ED68C92 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E8D2CF2201D59E997EE36A1 /* LoginView.swift */; };
+		3281429820D156DFBF30BB0D /* CameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5F00CB53EAA5B35B68E26FA /* CameraView.swift */; };
+		328F9110139F5312AA5C7657 /* VisualSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9489D093DAD356CB920C9636 /* VisualSearchView.swift */; };
+		56F7700FD15A5751B964943B /* VisualSearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8476A78A397B5427AE51B479 /* VisualSearchViewModel.swift */; };
+		5882394897BF5AAFB1B7F463 /* CollectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16400CFA103C55EAB3576D2E /* CollectionsView.swift */; };
+		58C3ED17C9D85E9FA31B9E49 /* ProductCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3271588D4D55D799388C04D /* ProductCard.swift */; };
+		75AAAB033E5E5022BBB66E32 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C3D3656511A58E198BBFBA9 /* HomeView.swift */; };
+		89EB02413A5256858CA26F3F /* SnapSheApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84B8DC4EBDA45BB39D24380D /* SnapSheApp.swift */; };
+		93B02D691AF55F81B4D04E93 /* LandingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C26C2EFBED9B51F0A1C5AC2A /* LandingView.swift */; };
+		9AD345A6DF085031BC44AEAA /* SaveToCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77C567C634A95D329E8F8788 /* SaveToCollectionView.swift */; };
+		9EC56F8706C25229AD277ECF /* RegisterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC24605FD8A5D5FA8228C6E /* RegisterView.swift */; };
+		AA0000000000000000000002 /* SnapShe/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000001 /* SnapShe/Assets.xcassets */; };
+		AA1B2C3D4E5F6789ABCDEF01 /* VideoVisualSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D4E5F6789ABCDEF00 /* VideoVisualSearchView.swift */; };
+		C0B78AFF54225732AC583CF4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 707966CD427D5C20865DF702 /* Models.swift */; };
+		C7BBB8AAFAD852DE91054EFB /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D391863F42DC5BF78B2F02FB /* MainTabView.swift */; };
+		C7E63B39303058A8B8B8BD91 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78DAA4A85A25344BE8FC6B8 /* SharedComponents.swift */; };
+		CD21829A97CA5CD68804B50F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C60DE509E515254AB36374A /* SettingsView.swift */; };
+		D401E543419554429B849A4B /* APIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BF6549CA1ED565F9076CD9C /* APIService.swift */; };
+		D487273B00DE5E4BB8AC6C04 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD42C45B238053AD882C1CA7 /* HomeViewModel.swift */; };
+		F2CCBFB060625D278D73CF1A /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 788A90D59A10536AA748107C /* RootView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		16400CFA103C55EAB3576D2E /* CollectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionsView.swift; sourceTree = "<group>"; };
+		1C3D3656511A58E198BBFBA9 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		1C81F77922105F5E96B04902 /* SnapShe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SnapShe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		29F6EA3C254E5BA2AA2B0DC5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		5E8D2CF2201D59E997EE36A1 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		707966CD427D5C20865DF702 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		77C567C634A95D329E8F8788 /* SaveToCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveToCollectionView.swift; sourceTree = "<group>"; };
+		788A90D59A10536AA748107C /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		8476A78A397B5427AE51B479 /* VisualSearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualSearchViewModel.swift; sourceTree = "<group>"; };
+		84B8DC4EBDA45BB39D24380D /* SnapSheApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapSheApp.swift; sourceTree = "<group>"; };
+		9489D093DAD356CB920C9636 /* VisualSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualSearchView.swift; sourceTree = "<group>"; };
+		9BF6549CA1ED565F9076CD9C /* APIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIService.swift; sourceTree = "<group>"; };
+		9C60DE509E515254AB36374A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000001 /* SnapShe/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = SnapShe/Assets.xcassets; sourceTree = SOURCE_ROOT; };
+		AA1B2C3D4E5F6789ABCDEF00 /* VideoVisualSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoVisualSearchView.swift; sourceTree = "<group>"; };
+		B2144343DC195CBBA66CF3FD /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		C26C2EFBED9B51F0A1C5AC2A /* LandingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandingView.swift; sourceTree = "<group>"; };
+		C5F00CB53EAA5B35B68E26FA /* CameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraView.swift; sourceTree = "<group>"; };
+		CEC24605FD8A5D5FA8228C6E /* RegisterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegisterView.swift; sourceTree = "<group>"; };
+		D391863F42DC5BF78B2F02FB /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		F3271588D4D55D799388C04D /* ProductCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCard.swift; sourceTree = "<group>"; };
+		F5551A91393A5010AFD83746 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		F78DAA4A85A25344BE8FC6B8 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedComponents.swift; sourceTree = "<group>"; };
+		FD42C45B238053AD882C1CA7 /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C0822A0DC56854B98E2CBAC6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0F85682637A9534DA79163BD /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				707966CD427D5C20865DF702 /* Models.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		137A5F65125D59A9BF0A9FAD /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				16400CFA103C55EAB3576D2E /* CollectionsView.swift */,
+				1C3D3656511A58E198BBFBA9 /* HomeView.swift */,
+				C26C2EFBED9B51F0A1C5AC2A /* LandingView.swift */,
+				5E8D2CF2201D59E997EE36A1 /* LoginView.swift */,
+				D391863F42DC5BF78B2F02FB /* MainTabView.swift */,
+				F3271588D4D55D799388C04D /* ProductCard.swift */,
+				B2144343DC195CBBA66CF3FD /* ProfileView.swift */,
+				CEC24605FD8A5D5FA8228C6E /* RegisterView.swift */,
+				788A90D59A10536AA748107C /* RootView.swift */,
+				77C567C634A95D329E8F8788 /* SaveToCollectionView.swift */,
+				9C60DE509E515254AB36374A /* SettingsView.swift */,
+				9489D093DAD356CB920C9636 /* VisualSearchView.swift */,
+				AA1B2C3D4E5F6789ABCDEF00 /* VideoVisualSearchView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		64A3478AAF295668A0F70FFB /* SnapShe */ = {
+			isa = PBXGroup;
+			children = (
+				84B8DC4EBDA45BB39D24380D /* SnapSheApp.swift */,
+				0F85682637A9534DA79163BD /* Models */,
+				137A5F65125D59A9BF0A9FAD /* Views */,
+				FCAD4921A980579584C89D84 /* ViewModels */,
+				E1B7702BD3E157DE9C5850C7 /* Services */,
+				921132316E1D514FBC8C2CB7 /* Components */,
+				AA0000000000000000000001 /* SnapShe/Assets.xcassets */,
+				29F6EA3C254E5BA2AA2B0DC5 /* Info.plist */,
+			);
+			path = SnapShe;
+			sourceTree = "<group>";
+		};
+		921132316E1D514FBC8C2CB7 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				C5F00CB53EAA5B35B68E26FA /* CameraView.swift */,
+				F78DAA4A85A25344BE8FC6B8 /* SharedComponents.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		E1B7702BD3E157DE9C5850C7 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				9BF6549CA1ED565F9076CD9C /* APIService.swift */,
+				F5551A91393A5010AFD83746 /* AuthManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		F10FFDA5958358C1AFECB3FB = {
+			isa = PBXGroup;
+			children = (
+				64A3478AAF295668A0F70FFB /* SnapShe */,
+				FFFCD56F75D4584D9E895EDC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FCAD4921A980579584C89D84 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				FD42C45B238053AD882C1CA7 /* HomeViewModel.swift */,
+				8476A78A397B5427AE51B479 /* VisualSearchViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		FFFCD56F75D4584D9E895EDC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1C81F77922105F5E96B04902 /* SnapShe.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6E314ED253DD5D2B9DBC26B8 /* SnapShe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 29E9E2EAE85E54D1B7419C9E /* Build configuration list for PBXNativeTarget "SnapShe" */;
+			buildPhases = (
+				E481E3A34DC75F2991217748 /* Sources */,
+				C0822A0DC56854B98E2CBAC6 /* Frameworks */,
+				833B48FFC443580F99F30307 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SnapShe;
+			productName = SnapShe;
+			productReference = 1C81F77922105F5E96B04902 /* SnapShe.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AF9F330489D25EE3ACA52E7A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					6E314ED253DD5D2B9DBC26B8 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 79822195DD305226A3D53A41 /* Build configuration list for PBXProject "SnapShe" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = F10FFDA5958358C1AFECB3FB;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FFFCD56F75D4584D9E895EDC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6E314ED253DD5D2B9DBC26B8 /* SnapShe */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		833B48FFC443580F99F30307 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000002 /* SnapShe/Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E481E3A34DC75F2991217748 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89EB02413A5256858CA26F3F /* SnapSheApp.swift in Sources */,
+				C0B78AFF54225732AC583CF4 /* Models.swift in Sources */,
+				D401E543419554429B849A4B /* APIService.swift in Sources */,
+				24ABCC24F44857B9AD9B8686 /* AuthManager.swift in Sources */,
+				D487273B00DE5E4BB8AC6C04 /* HomeViewModel.swift in Sources */,
+				56F7700FD15A5751B964943B /* VisualSearchViewModel.swift in Sources */,
+				5882394897BF5AAFB1B7F463 /* CollectionsView.swift in Sources */,
+				75AAAB033E5E5022BBB66E32 /* HomeView.swift in Sources */,
+				93B02D691AF55F81B4D04E93 /* LandingView.swift in Sources */,
+				2C35DB747B8D5F988ED68C92 /* LoginView.swift in Sources */,
+				C7BBB8AAFAD852DE91054EFB /* MainTabView.swift in Sources */,
+				58C3ED17C9D85E9FA31B9E49 /* ProductCard.swift in Sources */,
+				246BADC60B3D5E8390B7E772 /* ProfileView.swift in Sources */,
+				9EC56F8706C25229AD277ECF /* RegisterView.swift in Sources */,
+				F2CCBFB060625D278D73CF1A /* RootView.swift in Sources */,
+				9AD345A6DF085031BC44AEAA /* SaveToCollectionView.swift in Sources */,
+				CD21829A97CA5CD68804B50F /* SettingsView.swift in Sources */,
+				328F9110139F5312AA5C7657 /* VisualSearchView.swift in Sources */,
+				AA1B2C3D4E5F6789ABCDEF01 /* VideoVisualSearchView.swift in Sources */,
+				3281429820D156DFBF30BB0D /* CameraView.swift in Sources */,
+				C7E63B39303058A8B8B8BD91 /* SharedComponents.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		59921CF28D89548BB2D94362 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		8F053BABAA8A5D8FA160107E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = M3RM3YA99H;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SnapShe/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.snapshe.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		967E898CA76652D18E5EF981 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		DCF688FA394E5DCE94B58CA7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = M3RM3YA99H;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SnapShe/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.snapshe.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		29E9E2EAE85E54D1B7419C9E /* Build configuration list for PBXNativeTarget "SnapShe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8F053BABAA8A5D8FA160107E /* Debug */,
+				DCF688FA394E5DCE94B58CA7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		79822195DD305226A3D53A41 /* Build configuration list for PBXProject "SnapShe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				967E898CA76652D18E5EF981 /* Debug */,
+				59921CF28D89548BB2D94362 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AF9F330489D25EE3ACA52E7A /* Project object */;
+}
