@@ -10,7 +10,7 @@ workflows:
         BUNDLE_ID: "com.snapshe.app"
         XCODE_PROJECT: "SnapShe.xcodeproj"
         XCODE_SCHEME: "SnapShe"
-        APP_STORE_APPLE_ID: ""
+        APP_STORE_APPLE_ID: "6760227147"
 
       ios_signing:
         distribution_type: app_store
