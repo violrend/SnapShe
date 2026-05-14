@@ -1,0 +1,52 @@
+workflows:
+  ios-workflow:
+    name: SnapShe iOS Build
+
+    environment:
+      xcode: latest
+      cocoapods: default
+
+      vars:
+        BUNDLE_ID: "com.snapshe.app"
+        XCODE_PROJECT: "SnapShe.xcodeproj"
+        XCODE_SCHEME: "SnapShe"
+        APP_STORE_APPLE_ID: ""
+
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.snapshe.app
+
+    triggering:
+      events:
+        - push
+
+    scripts:
+      - name: Set build version
+        script: |
+          cd $CM_BUILD_DIR
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.2" SnapShe/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" SnapShe/Info.plist
+
+      - name: Install CocoaPods
+        script: |
+          pod install || true
+
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+
+        submit_to_testflight: true
+        submit_to_app_store: false
