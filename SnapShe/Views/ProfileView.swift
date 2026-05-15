@@ -23,7 +23,7 @@ struct ProfileView: View {
                     uploadsGrid
                 }
             }
-            .background(Color.white)
+            .refreshable { await loadUploads() }
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
