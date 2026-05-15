@@ -48,7 +48,10 @@ struct HomeView: View {
             .sheet(isPresented: $showCollections) { CollectionsView() }
             .sheet(isPresented: $showProfile) { ProfileView() }
         }
-        .task { if vm.photos.isEmpty { await vm.loadFeed(token: auth.token) } }
+        .task { await vm.loadFeed(token: auth.token) }
+        .onReceive(NotificationCenter.default.publisher(for: .feedNeedsRefresh)) { _ in
+            Task { await vm.silentRefresh(token: auth.token) }
+        }
         // Photo source picker
         .confirmationDialog("Upload", isPresented: $showSourcePicker) {
             Button("Camera") { showCamera = true }
@@ -87,8 +90,14 @@ struct HomeView: View {
         .sheet(item: $selectedFeedItem) { item in
             if item.mediaType == .video, let url = item.mediaURL {
                 VideoVisualSearchView(videoURL: url, serverVideoPath: item.video)
+                    .onDisappear {
+                        NotificationCenter.default.post(name: .feedNeedsRefresh, object: nil)
+                    }
             } else {
                 VisualSearchView(feedPhotoURL: item.mediaURL?.absoluteString, initialImage: nil)
+                    .onDisappear {
+                        NotificationCenter.default.post(name: .feedNeedsRefresh, object: nil)
+                    }
             }
         }
         // Local video pick → video search
@@ -282,10 +291,8 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 18).padding(.vertical, 18)
 
-                LazyVGrid(columns: columns, spacing: 6) {
-                    ForEach(vm.photos) { item in
-                        FeedItemCard(item: item) { selectedFeedItem = item }
-                    }
+                MasonryFeedGrid(items: vm.photos) { item in
+                    FeedItemCard(item: item) { selectedFeedItem = item }
                 }
                 .padding(.horizontal, 10).padding(.bottom, 24)
             }
@@ -341,29 +348,33 @@ struct FeedItemCard: View {
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .bottomLeading) {
-                // Cover image / thumbnail
                 Group {
                     if let url = item.coverURL {
                         AsyncImage(url: url) { phase in
                             switch phase {
-                            case .success(let img): img.resizable().scaledToFill()
-                            case .failure: Color.snapsheGray.overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                            default: Color.snapsheGray.shimmering()
+                            case .success(let img):
+                                img.resizable().scaledToFit()  // doğal oran → masonry
+                            case .failure:
+                                Color.snapsheGray
+                                    .frame(height: 160)
+                                    .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                            default:
+                                Color.snapsheGray.frame(height: 160).shimmering()
                             }
                         }
                     } else if item.mediaType == .video {
-                        // No thumbnail — dark placeholder with play icon
                         Color(hex: "#1a1a1a")
+                            .frame(height: 180)
                             .overlay(
                                 Image(systemName: "play.circle.fill")
                                     .font(.system(size: 36))
                                     .foregroundStyle(.white.opacity(0.7))
                             )
                     } else {
-                        Color.snapsheGray.overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                        Color.snapsheGray.frame(height: 160)
+                            .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
                     }
                 }
-                .frame(minHeight: 140, maxHeight: 280).clipped()
 
                 // Bottom badge
                 HStack(spacing: 5) {
@@ -387,6 +398,34 @@ struct FeedItemCard: View {
 
 // FeedPhotoCard kept for backwards compatibility in ProfileView etc.
 typealias FeedPhotoCard = FeedItemCard
+
+// MARK: - Masonry Grid (Pinterest tarzı, farklı yükseklikte 2 kolon)
+struct MasonryFeedGrid<Content: View>: View {
+    let items: [FeedItem]
+    let content: (FeedItem) -> Content
+
+    init(items: [FeedItem], @ViewBuilder content: @escaping (FeedItem) -> Content) {
+        self.items = items
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            // Sol kolon: 0, 2, 4, ...
+            LazyVStack(spacing: 6) {
+                ForEach(Array(items.enumerated().filter { $0.offset % 2 == 0 }.map { $0.element })) { item in
+                    content(item)
+                }
+            }
+            // Sağ kolon: 1, 3, 5, ...
+            LazyVStack(spacing: 6) {
+                ForEach(Array(items.enumerated().filter { $0.offset % 2 == 1 }.map { $0.element })) { item in
+                    content(item)
+                }
+            }
+        }
+    }
+}
 
 // MARK: - VideoTransferable
 struct VideoTransferable: Transferable {
