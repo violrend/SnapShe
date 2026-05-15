@@ -52,9 +52,15 @@ class VisualSearchViewModel: ObservableObject {
                 error = response.error ?? "Search failed."
             }
         } catch is CancellationError {
-            // İptal edildi — hata gösterme, sadece dur
+            // Task iptal edildi — hata gösterme
+            isSearching = false
+            return
+        } catch let urlErr as URLError where urlErr.code == .cancelled {
+            // URLSession iptal edildi — hata gösterme
+            isSearching = false
+            return
         } catch {
-            // Gerçek network hatası — ama önceki sonuç varsa silme
+            // Gerçek network hatası — önceki sonuç varsa silme
             if products.isEmpty {
                 self.error = "Network error. Please try again."
             }
@@ -98,7 +104,11 @@ class VisualSearchViewModel: ObservableObject {
                 error = response.error ?? "Search failed."
             }
         } catch is CancellationError {
-            // İptal edildi — hata gösterme
+            isSearching = false
+            return
+        } catch let urlErr as URLError where urlErr.code == .cancelled {
+            isSearching = false
+            return
         } catch {
             if products.isEmpty {
                 self.error = "Network error. Please try again."
@@ -112,13 +122,22 @@ class VisualSearchViewModel: ObservableObject {
     func uploadVideo(videoURL: URL, token: String) async {
         isUploadingVideo = true
         videoUploadError = nil
-        serverVideoPath = ""
-        videoFeedSaved = false
+        serverVideoPath  = ""
+        videoFeedSaved   = false
 
         do {
             let videoData = try Data(contentsOf: videoURL)
-            let filename = videoURL.lastPathComponent.isEmpty ? "video.mp4" : videoURL.lastPathComponent
-            let response = try await APIService.shared.uploadVideo(videoData: videoData, filename: filename, token: token)
+            let filename  = videoURL.lastPathComponent.isEmpty ? "video.mp4" : videoURL.lastPathComponent
+
+            // Video 1. saniyesinden thumbnail üret (ffmpeg yok, iOS ile yapıyoruz)
+            let thumbnailData = await generateThumbnail(from: videoURL)
+
+            let response = try await APIService.shared.uploadVideo(
+                videoData: videoData,
+                filename: filename,
+                thumbnailData: thumbnailData,
+                token: token
+            )
             if response.ok, let path = response.path {
                 serverVideoPath = path
             } else {
@@ -129,6 +148,25 @@ class VisualSearchViewModel: ObservableObject {
         }
 
         isUploadingVideo = false
+    }
+
+    /// AVAssetImageGenerator ile videonun 1. saniyesinden JPEG thumbnail üretir
+    private func generateThumbnail(from url: URL) async -> Data? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 640, height: 640)
+        let time = CMTime(seconds: 1.0, preferredTimescale: 600)
+        return await withCheckedContinuation { cont in
+            generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, cgImage, _, result, _ in
+                if result == .succeeded, let cg = cgImage {
+                    let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.75)
+                    cont.resume(returning: jpeg)
+                } else {
+                    cont.resume(returning: nil)
+                }
+            }
+        }
     }
 
     func resetVideoState() {
