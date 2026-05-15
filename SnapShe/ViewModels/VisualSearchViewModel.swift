@@ -31,9 +31,9 @@ class VisualSearchViewModel: ObservableObject {
     func performSearch(imageData: Data?, feedURL: String?, crop: CGRect, keyword: String, token: String) async {
         isSearching = true
         error = nil
-        
+
         let cropString = "\(String(format: "%.4f", crop.minX));\(String(format: "%.4f", crop.minY));\(String(format: "%.4f", crop.maxX));\(String(format: "%.4f", crop.maxY))"
-        
+
         do {
             let response = try await APIService.shared.visualSearch(
                 imageData: imageData ?? Data(),
@@ -42,16 +42,24 @@ class VisualSearchViewModel: ObservableObject {
                 keyword: keyword.isEmpty ? nil : keyword,
                 token: token
             )
+            // Task iptal edildiyse sonucu yoksay
+            guard !Task.isCancelled else { isSearching = false; return }
             if response.ok {
                 products = response.products ?? []
                 if let url = response.imageUrl { imageURL = url }
+                error = nil
             } else {
                 error = response.error ?? "Search failed."
             }
+        } catch is CancellationError {
+            // İptal edildi — hata gösterme, sadece dur
         } catch {
-            self.error = "Network error. Please try again."
+            // Gerçek network hatası — ama önceki sonuç varsa silme
+            if products.isEmpty {
+                self.error = "Network error. Please try again."
+            }
         }
-        
+
         isSearching = false
     }
 
@@ -89,8 +97,12 @@ class VisualSearchViewModel: ObservableObject {
             } else {
                 error = response.error ?? "Search failed."
             }
+        } catch is CancellationError {
+            // İptal edildi — hata gösterme
         } catch {
-            self.error = "Network error. Please try again."
+            if products.isEmpty {
+                self.error = "Network error. Please try again."
+            }
         }
 
         isSearching = false
