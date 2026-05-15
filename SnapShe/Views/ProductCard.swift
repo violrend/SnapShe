@@ -6,41 +6,53 @@ struct ProductCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image — tapping opens affiliate link
-            AsyncImage(url: product.thumbnailURL) { phase in
-                switch phase {
-                case .success(let img): img.resizable().scaledToFill()
-                case .failure:
-                    Color.snapsheGray.overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                default: Color.snapsheGray.shimmering()
+
+            // Görsel — sabit yükseklik, taşma yok
+            ZStack(alignment: .bottomTrailing) {
+                AsyncImage(url: product.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill()
+                            .frame(height: 160)
+                            .clipped()
+                    case .failure:
+                        Color.snapsheGray
+                            .frame(height: 160)
+                            .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                    default:
+                        Color.snapsheGray.frame(height: 160).shimmering()
+                    }
+                }
+                .frame(height: 160)
+                .clipped()
+
+                // Fiyat badge
+                if !product.price.isEmpty {
+                    Text(product.price)
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.snapsheBlack.opacity(0.82))
+                        .clipShape(Capsule())
+                        .padding(7)
                 }
             }
-            .frame(height: 170)
-            .clipped()
-            .overlay(alignment: .bottomTrailing) {
-                // Price badge
-                Text(product.price)
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(Color.snapsheBlack.opacity(0.82))
-                    .clipShape(Capsule())
-                    .padding(8)
-            }
+            .frame(height: 160)
             .contentShape(Rectangle())
             .onTapGesture { openAffiliate() }
 
+            // Başlık + kaydet
             VStack(alignment: .leading, spacing: 4) {
                 Text(product.title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.snapsheBlack)
                     .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(product.source)
                     .font(.system(size: 11))
                     .foregroundStyle(Color(hex: "#999"))
                     .lineLimit(1)
 
-                // Save button — separate from image tap
                 Button(action: onSave) {
                     Text("Save")
                         .font(.system(size: 13, weight: .bold))
@@ -51,7 +63,6 @@ struct ProductCard: View {
                         .clipShape(Capsule())
                 }
                 .padding(.top, 4)
-                // Prevent tap from bubbling up to image gesture
                 .simultaneousGesture(TapGesture().onEnded { _ in })
             }
             .padding(10)
