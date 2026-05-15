@@ -16,9 +16,9 @@ class VisualSearchViewModel: ObservableObject {
     @Published var videoUploadError: String? = nil
 
     var currentCrop: CGRect = CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.6)
-    
+
     private var searchTask: Task<Void, Never>? = nil
-    
+
     func scheduleSearch(imageData: Data?, feedURL: String?, crop: CGRect, keyword: String, token: String, delay: Double = 0.8) {
         searchTask?.cancel()
         searchTask = Task {
@@ -27,7 +27,7 @@ class VisualSearchViewModel: ObservableObject {
             await performSearch(imageData: imageData, feedURL: feedURL, crop: crop, keyword: keyword, token: token)
         }
     }
-    
+
     func performSearch(imageData: Data?, feedURL: String?, crop: CGRect, keyword: String, token: String) async {
         isSearching = true
         error = nil
@@ -42,25 +42,28 @@ class VisualSearchViewModel: ObservableObject {
                 keyword: keyword.isEmpty ? nil : keyword,
                 token: token
             )
-            // Task iptal edildiyse sonucu yoksay
-            guard !Task.isCancelled else { isSearching = false; return }
+
+            guard !Task.isCancelled else {
+                isSearching = false
+                return
+            }
+
             if response.ok {
                 products = response.products ?? []
-                if let url = response.imageUrl { imageURL = url }
+                if let url = response.imageUrl {
+                    imageURL = url
+                }
                 error = nil
             } else {
                 error = response.error ?? "Search failed."
             }
         } catch is CancellationError {
-            // Task iptal edildi — hata gösterme
             isSearching = false
             return
         } catch let urlErr as URLError where urlErr.code == .cancelled {
-            // URLSession iptal edildi — hata gösterme
             isSearching = false
             return
         } catch {
-            // Gerçek network hatası — önceki sonuç varsa silme
             if products.isEmpty {
                 self.error = "Network error. Please try again."
             }
@@ -70,6 +73,7 @@ class VisualSearchViewModel: ObservableObject {
     }
 
     // MARK: - Video frame search
+
     func scheduleVideoSearch(frameData: Data, crop: CGRect, keyword: String, token: String, delay: Double = 0.8) {
         searchTask?.cancel()
         searchTask = Task {
@@ -96,10 +100,15 @@ class VisualSearchViewModel: ObservableObject {
                 saveFeedEntry: shouldSaveFeed,
                 token: token
             )
+
             if response.ok {
                 products = response.products ?? []
-                if let url = response.imageUrl { imageURL = url }
-                if shouldSaveFeed { videoFeedSaved = true }
+                if let url = response.imageUrl {
+                    imageURL = url
+                }
+                if shouldSaveFeed {
+                    videoFeedSaved = true
+                }
             } else {
                 error = response.error ?? "Search failed."
             }
@@ -119,25 +128,23 @@ class VisualSearchViewModel: ObservableObject {
     }
 
     // MARK: - Upload video to server
+
     func uploadVideo(videoURL: URL, token: String) async {
         isUploadingVideo = true
         videoUploadError = nil
-        serverVideoPath  = ""
-        videoFeedSaved   = false
+        serverVideoPath = ""
+        videoFeedSaved = false
 
         do {
             let videoData = try Data(contentsOf: videoURL)
-            let filename  = videoURL.lastPathComponent.isEmpty ? "video.mp4" : videoURL.lastPathComponent
-
-            // Video 1. saniyesinden thumbnail üret (ffmpeg yok, iOS ile yapıyoruz)
-            let thumbnailData = await generateThumbnail(from: videoURL)
+            let filename = videoURL.lastPathComponent.isEmpty ? "video.mp4" : videoURL.lastPathComponent
 
             let response = try await APIService.shared.uploadVideo(
                 videoData: videoData,
                 filename: filename,
-                thumbnailData: thumbnailData,
                 token: token
             )
+
             if response.ok, let path = response.path {
                 serverVideoPath = path
             } else {
@@ -150,25 +157,6 @@ class VisualSearchViewModel: ObservableObject {
         isUploadingVideo = false
     }
 
-    /// AVAssetImageGenerator ile videonun 1. saniyesinden JPEG thumbnail üretir
-    private func generateThumbnail(from url: URL) async -> Data? {
-        let asset = AVURLAsset(url: url)
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 640, height: 640)
-        let time = CMTime(seconds: 1.0, preferredTimescale: 600)
-        return await withCheckedContinuation { cont in
-            generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, cgImage, _, result, _ in
-                if result == .succeeded, let cg = cgImage {
-                    let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.75)
-                    cont.resume(returning: jpeg)
-                } else {
-                    cont.resume(returning: nil)
-                }
-            }
-        }
-    }
-
     func resetVideoState() {
         serverVideoPath = ""
         videoFeedSaved = false
@@ -178,17 +166,25 @@ class VisualSearchViewModel: ObservableObject {
 }
 
 // MARK: - Capture a frame from AVPlayer at current time
+
 extension AVPlayer {
     func captureCurrentFrame() async -> UIImage? {
         guard let asset = currentItem?.asset,
-              let track = try? await asset.loadTracks(withMediaType: .video).first else { return nil }
+              let track = try? await asset.loadTracks(withMediaType: .video).first else {
+            return nil
+        }
+
         let time = currentTime()
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
-        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
-        _ = track  // suppress warning
+
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+            return nil
+        }
+
+        _ = track
         return UIImage(cgImage: cgImage)
     }
 }
