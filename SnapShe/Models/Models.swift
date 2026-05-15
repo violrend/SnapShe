@@ -129,6 +129,7 @@ struct CollectionsResponse: Codable {
 }
 struct GenericResponse: Codable {
     let ok: Bool; let error: String?; let id: String?; let collection: SnapCollection?
+    let avatar: String?
 }
 
 // Token-bearing auth responses
