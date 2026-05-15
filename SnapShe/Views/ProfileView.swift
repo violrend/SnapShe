@@ -7,6 +7,7 @@ struct ProfileView: View {
     @State private var showSettings = false
     @State private var uploads: [FeedPhoto] = []
     @State private var isLoading = true
+    @State private var selectedPhoto: FeedPhoto? = nil
 
     let columns = [GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3)]
 
@@ -44,6 +45,13 @@ struct ProfileView: View {
             }
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(item: $selectedPhoto) { item in
+            if item.mediaType == .video, let url = item.mediaURL {
+                VideoVisualSearchView(videoURL: url, serverVideoPath: item.video)
+            } else {
+                VisualSearchView(feedPhotoURL: item.mediaURL?.absoluteString, initialImage: nil)
+            }
+        }
         .task { await loadUploads() }
     }
 
@@ -67,6 +75,7 @@ struct ProfileView: View {
                 LazyVGrid(columns: columns, spacing: 3) {
                     ForEach(uploads) { photo in
                         ProfilePhotoTile(photo: photo)
+                            .onTapGesture { selectedPhoto = photo }
                     }
                 }
             }
@@ -74,9 +83,14 @@ struct ProfileView: View {
     }
 
     func loadUploads() async {
-        isLoading = true
+        // isLoading sadece ilk yüklemede true — refresh'te mevcut görseller kaybolmasın
+        if uploads.isEmpty { isLoading = true }
         let r = try? await APIService.shared.fetchProfile(token: auth.token)
-        uploads = r?.uploads ?? []
+        if let newUploads = r?.uploads, !newUploads.isEmpty {
+            uploads = newUploads
+        } else if r?.ok == true {
+            uploads = r?.uploads ?? []
+        }
         isLoading = false
     }
 }
