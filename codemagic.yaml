@@ -28,7 +28,7 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.2" SnapShe/Info.plist || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 3" SnapShe/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 4" SnapShe/Info.plist || true
 
       - name: Use signing profiles
         script: |
