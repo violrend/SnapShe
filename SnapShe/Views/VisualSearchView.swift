@@ -174,7 +174,16 @@ struct VisualSearchView: View {
             .navigationBarHidden(true)
         }
         .task {
-            await vm.performSearch(imageData: imageData, feedURL: feedPhotoURL, crop: cropRect, keyword: "", token: auth.token)
+            // İlk açılışta 0.3sn bekle — crop view tam yerleşsin, sonra ara
+            // scheduleSearch üzerinden gidiyoruz ki aynı Task manager kullanılsın
+            vm.scheduleSearch(
+                imageData: imageData,
+                feedURL: feedPhotoURL,
+                crop: cropRect,
+                keyword: "",
+                token: auth.token,
+                delay: 0.3
+            )
         }
         .sheet(isPresented: $showSaveModal) {
             if let product = productToSave { SaveToCollectionView(product: product) }
