@@ -162,7 +162,11 @@ struct SettingsView: View {
         isUploadingAvatar = true
         if let data = try? await item.loadTransferable(type: Data.self),
            let resized = UIImage(data: data)?.jpegData(compressionQuality: 0.75) {
-            _ = try? await APIService.shared.uploadAvatar(imageData: resized, token: auth.token)
+            if let r = try? await APIService.shared.uploadAvatar(imageData: resized, token: auth.token),
+               r.ok, let newAvatar = r.avatar, var u = auth.currentUser {
+                u = SnapUser(id: u.id, name: u.name, username: u.username, email: u.email, avatar: newAvatar)
+                auth.updateUser(u)
+            }
         }
         isUploadingAvatar = false
     }
