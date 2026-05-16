@@ -34,27 +34,12 @@ workflows:
           if [ -f "Podfile" ]; then
             pod install
           fi
-      - name: Create export options
-        script: |
-          PLIST=/Users/builder/export_options.plist
-          /usr/libexec/PlistBuddy -c "Clear dict" "$PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :signingStyle string automatic" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :teamID string M3RM3YA99H" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :uploadBitcode bool false" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$PLIST"
-          plutil -convert xml1 "$PLIST"
-      - name: Validate export options
-        script: |
-          plutil -lint /Users/builder/export_options.plist && echo "Plist gecerli" || { echo "Plist hatali"; exit 1; }
-          cat /Users/builder/export_options.plist
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" \
-            --export-options-plist /Users/builder/export_options.plist
+            --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
