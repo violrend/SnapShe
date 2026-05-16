@@ -14,6 +14,7 @@ workflows:
         XCODE_PROJECT: "SnapShe.xcodeproj"
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
+        DEVELOPMENT_TEAM: "M3RM3YA99H"
 
       ios_signing:
         distribution_type: app_store
@@ -33,16 +34,8 @@ workflows:
 
           sed -i '' "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = 1.0.4;/g" SnapShe.xcodeproj/project.pbxproj
           sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*;/CURRENT_PROJECT_VERSION = $CM_BUILD_NUMBER;/g" SnapShe.xcodeproj/project.pbxproj
-
-          echo "Final Info.plist values:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
-
-      - name: Use signing profiles
-        script: |
-          cd $CM_BUILD_DIR
-          xcode-project use-profiles \
-            --project "$CM_BUILD_DIR/$XCODE_PROJECT"
+          sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = M3RM3YA99H;/g" SnapShe.xcodeproj/project.pbxproj
+          sed -i '' "s/CODE_SIGN_STYLE = Manual;/CODE_SIGN_STYLE = Automatic;/g" SnapShe.xcodeproj/project.pbxproj
 
       - name: Install CocoaPods
         script: |
@@ -56,7 +49,8 @@ workflows:
           cd $CM_BUILD_DIR
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME"
+            --scheme "$XCODE_SCHEME" \
+            --archive-xcargs "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION=$CM_BUILD_NUMBER MARKETING_VERSION=1.0.4"
 
     artifacts:
       - build/ios/ipa/*.ipa
