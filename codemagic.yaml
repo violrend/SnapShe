@@ -30,6 +30,7 @@ workflows:
           cd $CM_BUILD_DIR
 
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
 
           sed -i '' "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = 1.0.4;/g" SnapShe.xcodeproj/project.pbxproj
@@ -44,13 +45,39 @@ workflows:
             pod install
           fi
 
+      - name: Create export options
+        script: |
+          cat > /Users/builder/export_options.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+
+            <key>signingStyle</key>
+            <string>automatic</string>
+
+            <key>teamID</key>
+            <string>M3RM3YA99H</string>
+
+            <key>uploadBitcode</key>
+            <false/>
+
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
+
           xcode-project build-ipa \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
             --scheme "$XCODE_SCHEME" \
-            --archive-xcargs "DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION=$CM_BUILD_NUMBER MARKETING_VERSION=1.0.4"
+            --export-options-plist /Users/builder/export_options.plist
 
     artifacts:
       - build/ios/ipa/*.ipa
