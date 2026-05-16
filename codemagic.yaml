@@ -30,14 +30,25 @@ workflows:
             pod install
           fi
 
-      - name: Set app version
+          - name: Set app version
         script: |
           cd $CM_BUILD_DIR
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || \
-          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
 
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || \
-          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+          APP_VERSION="1.0.4"
+          BUILD_NUMBER="${CM_BUILD_NUMBER:-28}"
+
+          echo "Setting CFBundleShortVersionString=$APP_VERSION"
+          echo "Setting CFBundleVersion=$BUILD_NUMBER"
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" SnapShe/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" SnapShe/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" SnapShe/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" SnapShe/Info.plist
+
+          echo "Final Info.plist:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
 
       - name: Build IPA
         script: |
