@@ -24,19 +24,26 @@ workflows:
         - push
 
     scripts:
-     - name: Set app version
-  script: |
-    cd $CM_BUILD_DIR
+      - name: Set app version
+        script: |
+          cd $CM_BUILD_DIR
 
-    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || \
-    /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist
+          else
+            /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+          fi
 
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || \
-    /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist
+          else
+            /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+          fi
 
-    echo "Final Info.plist:"
-    /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
-    /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
+          echo "Final Info.plist values:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
+
       - name: Use signing profiles
         script: |
           cd $CM_BUILD_DIR
