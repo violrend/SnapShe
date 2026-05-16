@@ -79,35 +79,28 @@ workflows:
           </plist>
           EOF
 
-      - name: Build IPA
+            - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
-
-          if [ -d "$XCODE_WORKSPACE" ]; then
-            BUILD_FILE="-workspace $XCODE_WORKSPACE"
-          else
-            BUILD_FILE="-project $XCODE_PROJECT"
-          fi
-
-          echo "Using build file: $BUILD_FILE"
 
           xcode-project use-profiles
 
           xcodebuild clean archive \
-            $BUILD_FILE \
-            -scheme "$XCODE_SCHEME" \
+            -project SnapShe.xcodeproj \
+            -scheme SnapShe \
             -configuration Release \
+            -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
-            CODE_SIGN_STYLE=Automatic \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
             DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
-            | xcpretty
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="Snapshe"
 
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
-            -exportOptionsPlist /tmp/export_options.plist \
+            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist"
             | xcpretty
 
     artifacts:
