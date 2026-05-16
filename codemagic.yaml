@@ -8,15 +8,12 @@ workflows:
     environment:
       xcode: latest
       cocoapods: default
-
       vars:
         BUNDLE_ID: "com.snapshe.app"
         XCODE_PROJECT: "SnapShe.xcodeproj"
-        XCODE_WORKSPACE: "SnapShe.xcworkspace"
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
-
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.snapshe.app
@@ -26,20 +23,9 @@ workflows:
         - push
 
     scripts:
-
-      - name: Show project structure
-        script: |
-          cd $CM_BUILD_DIR
-          echo "==== FILES ===="
-          ls -la
-          echo "==== XCODE PROJECTS ===="
-          find . -name "*.xcodeproj"
-          find . -name "*.xcworkspace"
-
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
-
           if [ -f "Podfile" ]; then
             pod install
           fi
@@ -47,47 +33,21 @@ workflows:
       - name: Set app version
         script: |
           cd $CM_BUILD_DIR
-
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || \
           /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
 
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || \
           /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
 
-      - name: Create export options
-        script: |
-          cat > /tmp/export_options.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-
-            <key>signingStyle</key>
-            <string>automatic</string>
-
-            <key>teamID</key>
-            <string>M3RM3YA99H</string>
-
-            <key>uploadBitcode</key>
-            <false/>
-
-            <key>uploadSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          EOF
-
-            - name: Build IPA
+      - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
 
           xcode-project use-profiles
 
           xcodebuild clean archive \
-            -project SnapShe.xcodeproj \
-            -scheme SnapShe \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
@@ -100,8 +60,7 @@ workflows:
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
-            -exportOptionsPlist "$CM_BUILD_DIR/export_options.plist"
-            | xcpretty
+            -exportOptionsPlist "/Users/builder/export_options.plist"
 
     artifacts:
       - build/ios/ipa/*.ipa
