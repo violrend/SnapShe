@@ -38,7 +38,20 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          # Archive
+          python3 -c "
+          import plistlib, os
+          data = {
+            'method': 'app-store-connect',
+            'signingStyle': 'automatic',
+            'teamID': 'M3RM3YA99H',
+            'uploadBitcode': False,
+            'uploadSymbols': True,
+          }
+          with open('/tmp/export_options.plist', 'wb') as f:
+            plistlib.dump(data, f, fmt=plistlib.FMT_XML)
+          print('export_options.plist created')
+          "
+
           xcodebuild archive \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
@@ -49,23 +62,6 @@ workflows:
             DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
             | xcpretty
 
-          # Export options plist
-          cat > /tmp/export_options.plist << 'EXPORTEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store-connect</string>
-  <key>signingStyle</key>
-  <string>automatic</string>
-  <key>teamID</key>
-  <string>M3RM3YA99H</string>
-</dict>
-</plist>
-EXPORTEOF
-
-          # Export IPA
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
