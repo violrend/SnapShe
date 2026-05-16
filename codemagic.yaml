@@ -1,12 +1,14 @@
 workflows:
   ios-workflow:
     name: SnapShe iOS Build
+
     integrations:
       app_store_connect: codemagic
 
     environment:
       xcode: latest
       cocoapods: default
+
       vars:
         BUNDLE_ID: "com.snapshe.app"
         XCODE_PROJECT: "SnapShe.xcodeproj"
@@ -14,6 +16,7 @@ workflows:
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
+
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.snapshe.app
@@ -23,17 +26,20 @@ workflows:
         - push
 
     scripts:
-      - name: Show project files
+
+      - name: Show project structure
         script: |
           cd $CM_BUILD_DIR
-          echo "Files:"
+          echo "==== FILES ===="
           ls -la
-          echo "Schemes:"
-          xcodebuild -list -project SnapShe.xcodeproj || true
+          echo "==== XCODE PROJECTS ===="
+          find . -name "*.xcodeproj"
+          find . -name "*.xcworkspace"
 
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
+
           if [ -f "Podfile" ]; then
             pod install
           fi
@@ -41,8 +47,12 @@ workflows:
       - name: Set app version
         script: |
           cd $CM_BUILD_DIR
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
 
       - name: Create export options
         script: |
@@ -53,14 +63,18 @@ workflows:
           <dict>
             <key>method</key>
             <string>app-store-connect</string>
+
             <key>signingStyle</key>
             <string>automatic</string>
+
             <key>teamID</key>
             <string>M3RM3YA99H</string>
+
+            <key>uploadBitcode</key>
+            <false/>
+
             <key>uploadSymbols</key>
             <true/>
-            <key>manageAppVersionAndBuildNumber</key>
-            <false/>
           </dict>
           </plist>
           EOF
@@ -75,21 +89,26 @@ workflows:
             BUILD_FILE="-project $XCODE_PROJECT"
           fi
 
+          echo "Using build file: $BUILD_FILE"
+
+          xcode-project use-profiles
+
           xcodebuild clean archive \
             $BUILD_FILE \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
-            -allowProvisioningUpdates \
             CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
+            | xcpretty
 
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
             -exportOptionsPlist /tmp/export_options.plist \
-            -allowProvisioningUpdates
+            | xcpretty
 
     artifacts:
       - build/ios/ipa/*.ipa
