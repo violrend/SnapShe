@@ -45,9 +45,9 @@ workflows:
       - name: Use signing profiles
         script: |
           cd $CM_BUILD_DIR
-          xcode-project use-profiles \
-            --project "$CM_BUILD_DIR/$XCODE_PROJECT"
-
+xcode-project use-profiles \
+  --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+  --scheme "$XCODE_SCHEME" || true
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
