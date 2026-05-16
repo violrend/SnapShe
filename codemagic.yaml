@@ -43,9 +43,11 @@ workflows:
           /usr/libexec/PlistBuddy -c "Add :teamID string M3RM3YA99H" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :uploadBitcode bool false" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "$PLIST"
+          plutil -convert xml1 "$PLIST"
       - name: Validate export options
         script: |
           plutil -lint /Users/builder/export_options.plist && echo "Plist gecerli" || { echo "Plist hatali"; exit 1; }
+          cat /Users/builder/export_options.plist
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
