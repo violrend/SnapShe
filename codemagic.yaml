@@ -3,71 +3,99 @@ workflows:
     name: SnapShe iOS Build
     integrations:
       app_store_connect: codemagic
+
     environment:
       xcode: latest
       cocoapods: default
       vars:
         BUNDLE_ID: "com.snapshe.app"
         XCODE_PROJECT: "SnapShe.xcodeproj"
+        XCODE_WORKSPACE: "SnapShe.xcworkspace"
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.snapshe.app
+
     triggering:
       events:
         - push
+
     scripts:
-      - name: Set app version
+      - name: Show project files
         script: |
           cd $CM_BUILD_DIR
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+          echo "Files:"
+          ls -la
+          echo "Schemes:"
+          xcodebuild -list -project SnapShe.xcodeproj || true
+
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
           if [ -f "Podfile" ]; then
             pod install
           fi
+
+      - name: Set app version
+        script: |
+          cd $CM_BUILD_DIR
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+
+      - name: Create export options
+        script: |
+          cat > /tmp/export_options.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>M3RM3YA99H</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
       - name: Build IPA
         script: |
           cd $CM_BUILD_DIR
 
-          python3 -c "
-          import plistlib
-          data = {
-            'method': 'app-store-connect',
-            'signingStyle': 'automatic',
-            'teamID': 'M3RM3YA99H',
-            'uploadBitcode': False,
-            'uploadSymbols': True,
-          }
-          with open('/tmp/export_options.plist', 'wb') as f:
-            plistlib.dump(data, f, fmt=plistlib.FMT_XML)
-          print('export_options.plist created')
-          "
+          if [ -d "$XCODE_WORKSPACE" ]; then
+            BUILD_FILE="-workspace $XCODE_WORKSPACE"
+          else
+            BUILD_FILE="-project $XCODE_PROJECT"
+          fi
 
-          xcodebuild archive \
-            -project "$XCODE_PROJECT" \
+          xcodebuild clean archive \
+            $BUILD_FILE \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -allowProvisioningUpdates \
             CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
-            | xcpretty
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM
 
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             -exportPath "$CM_BUILD_DIR/build/ios/ipa" \
             -exportOptionsPlist /tmp/export_options.plist \
-            -allowProvisioningUpdates \
-            | xcpretty
+            -allowProvisioningUpdates
+
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/SnapShe.xcarchive
       - /tmp/xcodebuild_logs/*.log
+
     publishing:
       app_store_connect:
         auth: integration
