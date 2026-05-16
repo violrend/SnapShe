@@ -29,11 +29,9 @@ workflows:
           cd $CM_BUILD_DIR
 
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
-
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
 
           sed -i '' "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = 1.0.4;/g" SnapShe.xcodeproj/project.pbxproj
-
           sed -i '' "s/CURRENT_PROJECT_VERSION = [^;]*;/CURRENT_PROJECT_VERSION = $CM_BUILD_NUMBER;/g" SnapShe.xcodeproj/project.pbxproj
 
           echo "Final Info.plist values:"
@@ -44,8 +42,7 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
           xcode-project use-profiles \
-            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            --scheme "$XCODE_SCHEME" || true
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT"
 
       - name: Install CocoaPods
         script: |
