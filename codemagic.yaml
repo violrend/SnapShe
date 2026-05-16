@@ -24,12 +24,19 @@ workflows:
         - push
 
     scripts:
-      - name: Set app version
-        script: |
-          cd $CM_BUILD_DIR
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || true
+     - name: Set app version
+  script: |
+    cd $CM_BUILD_DIR
 
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.4" SnapShe/Info.plist || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 1.0.4" SnapShe/Info.plist
+
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CM_BUILD_NUMBER" SnapShe/Info.plist || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CM_BUILD_NUMBER" SnapShe/Info.plist
+
+    echo "Final Info.plist:"
+    /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
+    /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
       - name: Use signing profiles
         script: |
           cd $CM_BUILD_DIR
