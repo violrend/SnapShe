@@ -3,6 +3,8 @@ import Combine
 
 extension Notification.Name {
     static let feedNeedsRefresh = Notification.Name("feedNeedsRefresh")
+    static let discoverPause = Notification.Name("discoverPause")
+    static let discoverResume = Notification.Name("discoverResume")
 }
 
 @MainActor
