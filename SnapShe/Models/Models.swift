@@ -169,3 +169,30 @@ struct VideoUploadResponse: Codable {
     let id: String?
     let error: String?
 }
+
+// MARK: - Instagram Fetch Response
+struct InstagramFetchResponse: Codable {
+    let ok: Bool
+    let type: String?
+    let imageUrl: String?
+    let videoUrl: String?
+    let uploadId: String?
+    let error: String?
+    enum CodingKeys: String, CodingKey {
+        case ok, type, error
+        case imageUrl  = "image_url"
+        case videoUrl  = "video_url"
+        case uploadId  = "upload_id"
+    }
+}
+
+// MARK: - Instagram Fetch Error
+struct InstagramFetchError: Error {
+    let message: String
+}
+
+// MARK: - IdentifiableString (sheet binding helper)
+struct IdentifiableString: Identifiable {
+    let id = UUID()
+    let value: String
+}
