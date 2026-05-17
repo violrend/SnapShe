@@ -110,7 +110,7 @@ class APIService {
     /// Videoyu sunucuya yükler ve sunucu path'i döner.
     func uploadVideo(videoData: Data, filename: String, thumbnailData: Data? = nil, token: String) async throws -> VideoUploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
-        var req = URLRequest(url: URL(string: "\(Self.baseURL)/upload_video.php")!)
+        var req = URLRequest(url: URL(string: "\(Self.baseURL)/api_mobile/upload_video.php")!)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.setValue(token, forHTTPHeaderField: "X-App-Token")
