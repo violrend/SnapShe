@@ -49,12 +49,12 @@ struct LandingView: View {
                             .padding(.horizontal, 14).padding(.vertical, 7)
                             .background(Color.snapsheBlack.opacity(0.07)).clipShape(Capsule())
 
-                        Text("Find the outfit\nyou love with\na photo.")
+                        Text("Find the outfit\nyou love with\na photo or video.")
                             .font(.system(size: 40, weight: .black))
                             .foregroundStyle(Color.snapsheBlack)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text("SnapShe helps you search fashion visually. Upload a style photo, discover similar products, and save your favorite finds.")
+                        Text("SnapShe helps you search fashion visually. Upload a style photo or video , discover similar products, and save your favorite finds.")
                             .font(.system(size: 16)).foregroundStyle(Color(hex: "#555")).lineSpacing(3)
 
                         HStack(spacing: 12) {
@@ -82,13 +82,13 @@ struct LandingView: View {
                     VStack(spacing: 0) {
                         LandingFeatureRow(icon: "photo.on.rectangle.angled",
                             gradient: [Color.snapsheBlack, Color.snapshePurple],
-                            title: "Search visually with images.",
-                            description: "Upload a photo, crop the item you want, and explore similar fashion products instantly.")
+                            title: "Search visually with images or video.",
+                            description: "Upload a photo or video, crop the item you want, and explore similar fashion products instantly.")
                         Divider().padding(.horizontal, 20)
                         LandingFeatureRow(icon: "sparkles",
                             gradient: [Color.snapshePurple, Color.snapshePink],
                             title: "Discover inspiration first.",
-                            description: "Your home feed shows recent uploads from the community. Tap any photo to shop the look.")
+                            description: "Your home feed shows recent uploads from the community. Tap any photoor video to shop the look.")
                         Divider().padding(.horizontal, 20)
                         LandingFeatureRow(icon: "heart.fill",
                             gradient: [Color.snapshePink, Color(hex: "#ff8c42")],
@@ -96,6 +96,14 @@ struct LandingView: View {
                             description: "Create collections to organize products you discover through visual search.")
                     }
                     .padding(.top, 32)
+
+                    // ── INSTAGRAM LINK SEARCH ────────────────────────
+                    InstagramSearchSection()
+                        .padding(.top, 40)
+
+                    // ── DISCOVER SECTION ──────────────────────────────
+                    DiscoverPromoSection()
+                        .padding(.top, 8)
 
                     // ── JOIN BAND ─────────────────────────────────────
                     VStack(spacing: 16) {
@@ -254,5 +262,361 @@ struct LandingFeatureRow: View {
             Spacer()
         }
         .padding(.horizontal, 20).padding(.vertical, 20)
+    }
+}
+
+// MARK: - Instagram Link Search Section
+
+struct InstagramSearchSection: View {
+@State private var isAnimating = false
+    let exampleLinks = [
+        "instagram.com/p/ABC123...",
+        "instagram.com/reel/XYZ789...",
+        "instagram.com/p/fashion_post...",
+    ]
+    @State private var exampleIndex = 0
+    @State private var placeholderText = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        LinearGradient(
+                            colors: [Color(hex: "#833ab4"), Color(hex: "#fd1d1d"), Color(hex: "#fcb045")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        Image(systemName: "link")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Search from Instagram")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Text("Paste any post or Reels link")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#888"))
+                    }
+                    Spacer()
+                }
+
+                Text("Copy a link from Instagram and paste it here — SnapShe finds similar fashion products from the photo or video automatically.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color(hex: "#666"))
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 20)
+
+            // Input card
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    // Instagram gradient icon
+                    ZStack {
+                        LinearGradient(
+                            colors: [Color(hex: "#833ab4"), Color(hex: "#fd1d1d"), Color(hex: "#fcb045")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+
+                    Text(placeholderText.isEmpty ? "instagram.com/p/..." : placeholderText)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(hex: "#bbb"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .allowsHitTesting(false)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color(hex: "#e8e8e8"), lineWidth: 1.5)
+                )
+                .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+
+                // Search button
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        isAnimating = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        isAnimating = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isAnimating {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 15, weight: .bold))
+                        }
+                        Text(isAnimating ? "Searching…" : "Find similar products")
+                            .font(.system(size: 15, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: "#e0e0e0"), Color(hex: "#e0e0e0")],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .disabled(true)
+
+                // How it works steps
+                HStack(spacing: 0) {
+                    ForEach(["Copy link", "Paste here", "Discover"], id: \.self) { step in
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.snapshePurple.opacity(0.15))
+                                .frame(width: 20, height: 20)
+                                .overlay(
+                                    Text(String(["Copy link", "Paste here", "Discover"].firstIndex(of: step)! + 1))
+                                        .font(.system(size: 10, weight: .black))
+                                        .foregroundStyle(Color.snapshePurple)
+                                )
+                            Text(step)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color(hex: "#888"))
+                        }
+                        if step != "Discover" {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Color(hex: "#ccc"))
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+        }
+        .onAppear { animatePlaceholder() }
+    }
+
+    func animatePlaceholder() {
+        let target = exampleLinks[exampleIndex]
+        placeholderText = ""
+        var charIndex = 0
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            if charIndex < target.count {
+                let idx = target.index(target.startIndex, offsetBy: charIndex)
+                placeholderText += String(target[idx])
+                charIndex += 1
+            } else {
+                timer.invalidate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation { placeholderText = "" }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        exampleIndex = (exampleIndex + 1) % exampleLinks.count
+                        animatePlaceholder()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Discover Promo Section
+
+struct DiscoverPromoSection: View {
+    @State private var activeCard = 0
+    let timer = Timer.publish(every: 2.5, on: .main, in: .common).autoconnect()
+
+    let cards: [(icon: String, color: Color, title: String, sub: String)] = [
+        ("play.rectangle.fill", Color.snapshePurple, "Street style", "@fashionista"),
+        ("video.fill", Color.snapshePink, "Summer looks", "@styleinspo"),
+        ("camera.fill", Color.snapsheBlack, "Minimal outfits", "@minimalmode"),
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header badge
+            HStack(spacing: 8) {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color.snapshePurple, Color.snapshePink],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    .frame(width: 48, height: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Discover")
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Text("NEW")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Color.snapshePurple)
+                            .clipShape(Capsule())
+                    }
+                    Text("Swipe through fashion snaps")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color(hex: "#888"))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+
+            // Description
+            Text("A full-screen vertical feed of fashion photos and videos from the community. Swipe up to explore, tap to find similar products instantly.")
+                .font(.system(size: 14))
+                .foregroundStyle(Color(hex: "#666"))
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
+            // Mock phone preview
+            ZStack {
+                // Phone frame
+                RoundedRectangle(cornerRadius: 36, style: .continuous)
+                    .fill(Color.snapsheBlack)
+                    .frame(width: 180, height: 300)
+                    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 12)
+
+                // Screen
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .fill(Color.black)
+                    .frame(width: 168, height: 288)
+                    .overlay(
+                        ZStack(alignment: .bottom) {
+                            // Animated card background
+                            ForEach(0..<cards.count, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [cards[i].color.opacity(0.7), Color.black],
+                                            startPoint: .top, endPoint: .bottom
+                                        )
+                                    )
+                                    .opacity(activeCard == i ? 1 : 0)
+                                    .animation(.easeInOut(duration: 0.5), value: activeCard)
+                            }
+
+                            // Content overlay
+                            VStack(alignment: .leading, spacing: 6) {
+                                // User row
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(cards[activeCard].color)
+                                        .frame(width: 24, height: 24)
+                                        .overlay(
+                                            Image(systemName: cards[activeCard].icon)
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        )
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(cards[activeCard].title)
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundStyle(.white)
+                                        Text(cards[activeCard].sub)
+                                            .font(.system(size: 8))
+                                            .foregroundStyle(.white.opacity(0.6))
+                                    }
+                                    Spacer()
+                                }
+
+                                // Find similar button (mini)
+                                HStack(spacing: 4) {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text("Find similar products")
+                                        .font(.system(size: 8, weight: .black))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 7, weight: .bold))
+                                }
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 8).padding(.vertical, 6)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .padding(12)
+
+                            // Discover label top
+                            VStack {
+                                Text("Discover")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.top, 14)
+                                Spacer()
+                            }
+
+                            // Swipe indicator
+                            VStack {
+                                Spacer()
+                                HStack(spacing: 4) {
+                                    ForEach(0..<cards.count, id: \.self) { i in
+                                        Capsule()
+                                            .fill(Color.white.opacity(activeCard == i ? 1 : 0.3))
+                                            .frame(width: activeCard == i ? 16 : 4, height: 4)
+                                            .animation(.spring(response: 0.3), value: activeCard)
+                                    }
+                                }
+                                .padding(.bottom, 50)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    )
+
+                // Notch
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.snapsheBlack)
+                    .frame(width: 52, height: 14)
+                    .offset(y: -143)
+
+                // Home bar
+                Capsule()
+                    .fill(Color.white.opacity(0.3))
+                    .frame(width: 50, height: 3)
+                    .offset(y: 138)
+            }
+            .padding(.top, 28)
+            .frame(maxWidth: .infinity)
+            .onReceive(timer) { _ in
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    activeCard = (activeCard + 1) % cards.count
+                }
+            }
+
+            // Feature pills
+            HStack(spacing: 8) {
+                ForEach(["Auto-play videos", "Swipe to browse", "Instant search"], id: \.self) { pill in
+                    Text(pill)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.snapshePurple)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Color.snapshePurple.opacity(0.08))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 20)
+        }
+        .padding(.bottom, 8)
     }
 }
