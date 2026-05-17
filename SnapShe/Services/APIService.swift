@@ -108,13 +108,13 @@ class APIService {
 
     // MARK: - Video Upload
     /// Videoyu sunucuya yükler ve sunucu path'i döner.
-    func uploadVideo(videoData: Data, filename: String, token: String) async throws -> VideoUploadResponse {
+    func uploadVideo(videoData: Data, filename: String, thumbnailData: Data? = nil, token: String) async throws -> VideoUploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
         var req = URLRequest(url: URL(string: "\(Self.baseURL)/upload_video.php")!)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.setValue(token, forHTTPHeaderField: "X-App-Token")
-        req.timeoutInterval = 120  // büyük videolar için
+        req.timeoutInterval = 120
 
         let ext = (filename as NSString).pathExtension.lowercased()
         let mime: String
@@ -127,9 +127,25 @@ class APIService {
 
         var body = Data()
         body.appendFile(boundary: boundary, name: "video", filename: filename, mime: mime, data: videoData)
+        if let thumb = thumbnailData {
+            body.appendFile(boundary: boundary, name: "thumbnail", filename: "thumb.jpg", mime: "image/jpeg", data: thumb)
+        }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         req.httpBody = body
         return try await decode(req)
+    }
+
+    // MARK: - Instagram Fetch
+    func instagramFetch(url: String, token: String) async throws -> InstagramFetchResponse {
+        var req = post("\(Self.baseURL)/instagram-fetch.php", token: token)
+        req.httpBody = "url=\(url.urlEnc)".data(using: .utf8)
+        req.timeoutInterval = 60
+        let (data, _) = try await session.data(for: req)
+        let decoded = try JSONDecoder().decode(InstagramFetchResponse.self, from: data)
+        if !decoded.ok {
+            throw InstagramFetchError(message: decoded.error ?? "Could not retrieve media.")
+        }
+        return decoded
     }
 
     // MARK: - Collections
