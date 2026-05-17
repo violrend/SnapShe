@@ -29,8 +29,7 @@ struct HomeView: View {
     // Instagram fetch sheet
     @State private var showInstagramFetch = false
     @State private var instagramImageURL: String? = nil
-    @State private var instagramVideoURL: URL? = nil
-    @State private var showInstagramVideoSearch = false
+    @State private var pendingInstagramVideoURL: URL? = nil
 
     let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
@@ -109,7 +108,14 @@ struct HomeView: View {
         // Local video pick → video search
         .fullScreenCover(isPresented: $showVideoSearch) {
             if let url = videoForSearch {
-                VideoVisualSearchView(videoURL: url, serverVideoPath: nil)
+                // Remote URL ise (Instagram Reels) serverVideoPath olarak relative path geç
+                let serverPath: String? = (url.scheme == "https" || url.scheme == "http") ? {
+                    let base = APIService.baseURL.trimmingCharacters(in: .init(charactersIn: "/"))
+                    var path = url.absoluteString
+                    if path.hasPrefix(base) { path = String(path.dropFirst(base.count)) }
+                    return path.trimmingCharacters(in: .init(charactersIn: "/"))
+                }() : nil
+                VideoVisualSearchView(videoURL: url, serverVideoPath: serverPath)
             }
         }
         // Instagram fetch sheet
@@ -120,8 +126,7 @@ struct HomeView: View {
                     instagramImageURL = url
                 case .video(let urlStr):
                     if let url = URL(string: urlStr) {
-                        instagramVideoURL = url
-                        showInstagramVideoSearch = true
+                        pendingInstagramVideoURL = url
                     }
                 }
             }
@@ -133,10 +138,16 @@ struct HomeView: View {
         )) { item in
             VisualSearchView(feedPhotoURL: item.value, initialImage: nil)
         }
-        // Instagram Reels → video search
-        .fullScreenCover(isPresented: $showInstagramVideoSearch) {
-            if let url = instagramVideoURL {
-                VideoVisualSearchView(videoURL: url, serverVideoPath: url.absoluteString)
+        // Instagram Reels → video search (sheet dismiss bittikten sonra aç)
+        .onChange(of: pendingInstagramVideoURL) { _, url in
+            guard url != nil else { return }
+            // Sheet tamamen kapandıktan sonra aç
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                if let url = pendingInstagramVideoURL {
+                    videoForSearch = url
+                    showVideoSearch = true
+                    pendingInstagramVideoURL = nil
+                }
             }
         }
     }
