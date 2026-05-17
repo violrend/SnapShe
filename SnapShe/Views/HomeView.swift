@@ -26,6 +26,12 @@ struct HomeView: View {
     @State private var videoForSearch: URL? = nil
     @State private var showVideoSearch = false
 
+    // Instagram fetch sheet
+    @State private var showInstagramFetch = false
+    @State private var instagramImageURL: String? = nil
+    @State private var instagramVideoURL: URL? = nil
+    @State private var showInstagramVideoSearch = false
+
     let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
     var body: some View {
@@ -104,6 +110,33 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showVideoSearch) {
             if let url = videoForSearch {
                 VideoVisualSearchView(videoURL: url, serverVideoPath: nil)
+            }
+        }
+        // Instagram fetch sheet
+        .sheet(isPresented: $showInstagramFetch) {
+            InstagramFetchView { result in
+                switch result {
+                case .image(let url):
+                    instagramImageURL = url
+                case .video(let urlStr):
+                    if let url = URL(string: urlStr) {
+                        instagramVideoURL = url
+                        showInstagramVideoSearch = true
+                    }
+                }
+            }
+        }
+        // Instagram fotoğraf → visual search
+        .sheet(item: Binding(
+            get: { instagramImageURL.map { IdentifiableString(value: $0) } },
+            set: { if $0 == nil { instagramImageURL = nil } }
+        )) { item in
+            VisualSearchView(feedPhotoURL: item.value, initialImage: nil)
+        }
+        // Instagram Reels → video search
+        .fullScreenCover(isPresented: $showInstagramVideoSearch) {
+            if let url = instagramVideoURL {
+                VideoVisualSearchView(videoURL: url, serverVideoPath: url.absoluteString)
             }
         }
     }
@@ -185,6 +218,23 @@ struct HomeView: View {
                     ZStack {
                         Circle().fill(Color.snapshePurple).frame(width: 40, height: 40)
                         Image(systemName: "video.fill")
+                            .font(.system(size: 16)).foregroundStyle(.white)
+                    }
+                }
+
+                // Instagram fetch button
+                Button { showInstagramFetch = true } label: {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color(hex: "#d62976"), Color(hex: "#962fbf")],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 40, height: 40)
+                        Image(systemName: "camera")
                             .font(.system(size: 16)).foregroundStyle(.white)
                     }
                 }
