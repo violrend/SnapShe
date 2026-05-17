@@ -22,11 +22,9 @@ struct HomeView: View {
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>? = nil
 
-    // Video visual search sheet
     @State private var videoForSearch: URL? = nil
     @State private var showVideoSearch = false
 
-    // Instagram fetch sheet
     @State private var showInstagramFetch = false
     @State private var instagramImageURL: String? = nil
     @State private var pendingInstagramVideoURL: URL? = nil
@@ -42,7 +40,9 @@ struct HomeView: View {
                 if !searchText.isEmpty {
                     searchResultsView
                 } else if vm.isLoading && vm.photos.isEmpty {
-                    Spacer(); ProgressView().tint(Color.snapshePurple); Spacer()
+                    Spacer()
+                    ProgressView().tint(Color.snapshePurple)
+                    Spacer()
                 } else if vm.photos.isEmpty {
                     emptyStateView
                 } else {
@@ -57,29 +57,27 @@ struct HomeView: View {
         .onReceive(NotificationCenter.default.publisher(for: .feedNeedsRefresh)) { _ in
             Task { await vm.silentRefresh(token: auth.token) }
         }
-        // Photo source picker
         .confirmationDialog("Upload", isPresented: $showSourcePicker) {
             Button("Camera") { showCamera = true }
             Button("Photo Library") { showImagePicker = true }
             Button("Video Library") { showVideoPicker = true }
             Button("Cancel", role: .cancel) {}
         }
-        // Photo picker
         .photosPicker(isPresented: $showImagePicker, selection: $photoPickerItem, matching: .images)
         .onChange(of: photoPickerItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) { onVisualSearch(image) }
+                   let image = UIImage(data: data) {
+                    onVisualSearch(image)
+                }
                 photoPickerItem = nil
             }
         }
-        // Video picker
         .photosPicker(isPresented: $showVideoPicker, selection: $videoPickerItem, matching: .videos)
         .onChange(of: videoPickerItem) { _, item in
             guard let item else { return }
             Task {
-                // Load video as file URL via transferable
                 if let movie = try? await item.loadTransferable(type: VideoTransferable.self) {
                     videoForSearch = movie.url
                     showVideoSearch = true
@@ -87,11 +85,12 @@ struct HomeView: View {
                 videoPickerItem = nil
             }
         }
-        // Camera
         .fullScreenCover(isPresented: $showCamera) {
-            CameraView { image in showCamera = false; onVisualSearch(image) }
+            CameraView { image in
+                showCamera = false
+                onVisualSearch(image)
+            }
         }
-        // Feed item tap → photo or video search
         .sheet(item: $selectedFeedItem) { item in
             if item.mediaType == .video, let url = item.mediaURL {
                 VideoVisualSearchView(videoURL: url, serverVideoPath: item.video)
@@ -105,43 +104,35 @@ struct HomeView: View {
                     }
             }
         }
-        // Local video pick → video search
         .fullScreenCover(isPresented: $showVideoSearch) {
             if let url = videoForSearch {
-                // Remote URL ise (Instagram Reels) serverVideoPath olarak relative path geç
-                let serverPath: String? = (url.scheme == "https" || url.scheme == "http") ? {
-                    let base = APIService.baseURL.trimmingCharacters(in: .init(charactersIn: "/"))
-                    var path = url.absoluteString
-                    if path.hasPrefix(base) { path = String(path.dropFirst(base.count)) }
-                    return path.trimmingCharacters(in: .init(charactersIn: "/"))
-                }() : nil
+                let serverPath = makeServerPath(from: url)
                 VideoVisualSearchView(videoURL: url, serverVideoPath: serverPath)
             }
         }
-        // Instagram fetch sheet
         .sheet(isPresented: $showInstagramFetch) {
-            InstagramFetchView { result in
+            InstagramFetchView(onResult: { result in
                 switch result {
                 case .image(let url):
                     instagramImageURL = url
+
                 case .video(let urlStr):
                     if let url = URL(string: urlStr) {
                         pendingInstagramVideoURL = url
                     }
                 }
-            }
+            })
+            .environmentObject(auth)
         }
-        // Instagram fotoğraf → visual search
         .sheet(item: Binding(
             get: { instagramImageURL.map { IdentifiableString(value: $0) } },
             set: { if $0 == nil { instagramImageURL = nil } }
         )) { item in
             VisualSearchView(feedPhotoURL: item.value, initialImage: nil)
         }
-        // Instagram Reels → video search (sheet dismiss bittikten sonra aç)
         .onChange(of: pendingInstagramVideoURL) { _, url in
             guard url != nil else { return }
-            // Sheet tamamen kapandıktan sonra aç
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 if let url = pendingInstagramVideoURL {
                     videoForSearch = url
@@ -152,7 +143,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Top Bar
     var topBar: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -166,7 +156,8 @@ struct HomeView: View {
 
                 Button("Collections") { showCollections = true }
                     .font(.system(size: 13, weight: .bold))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                     .background(Color.snapsheGray)
                     .foregroundStyle(Color.snapsheBlack)
                     .clipShape(Capsule())
@@ -178,7 +169,8 @@ struct HomeView: View {
                     }
                 }
                 .font(.system(size: 13, weight: .bold))
-                .padding(.horizontal, 12).padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .background(Color.snapsheGray)
                 .foregroundStyle(Color.snapsheBlack)
                 .clipShape(Capsule())
@@ -187,53 +179,69 @@ struct HomeView: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-            // Search bar row
             HStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(Color(hex: "#888"))
+
                     TextField("Search users...", text: $searchText)
                         .font(.system(size: 16))
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .onChange(of: searchText) { _, q in
                             searchTask?.cancel()
-                            if q.isEmpty { searchResults = []; return }
+
+                            if q.isEmpty {
+                                searchResults = []
+                                return
+                            }
+
                             searchTask = Task {
                                 try? await Task.sleep(nanoseconds: 400_000_000)
                                 guard !Task.isCancelled else { return }
                                 await performSearch(q)
                             }
                         }
+
                     if !searchText.isEmpty {
-                        Button { searchText = ""; searchResults = [] } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(Color(hex: "#ccc"))
+                        Button {
+                            searchText = ""
+                            searchResults = []
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Color(hex: "#ccc"))
                         }
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(Color.snapsheGray)
                 .clipShape(Capsule())
 
-                // Photo camera button
                 Button { showSourcePicker = true } label: {
                     ZStack {
-                        Circle().fill(Color.snapsheBlack).frame(width: 40, height: 40)
+                        Circle()
+                            .fill(Color.snapsheBlack)
+                            .frame(width: 40, height: 40)
+
                         Image(systemName: "viewfinder.circle.fill")
-                            .font(.system(size: 22)).foregroundStyle(.white)
+                            .font(.system(size: 22))
+                            .foregroundStyle(.white)
                     }
                 }
 
-                // Video search button
                 Button { showVideoPicker = true } label: {
                     ZStack {
-                        Circle().fill(Color.snapshePurple).frame(width: 40, height: 40)
+                        Circle()
+                            .fill(Color.snapshePurple)
+                            .frame(width: 40, height: 40)
+
                         Image(systemName: "video.fill")
-                            .font(.system(size: 16)).foregroundStyle(.white)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white)
                     }
                 }
 
-                // Instagram fetch button
                 Button { showInstagramFetch = true } label: {
                     ZStack {
                         Circle()
@@ -245,8 +253,10 @@ struct HomeView: View {
                                 )
                             )
                             .frame(width: 40, height: 40)
+
                         Image(systemName: "camera")
-                            .font(.system(size: 16)).foregroundStyle(.white)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.white)
                     }
                 }
             }
@@ -256,18 +266,32 @@ struct HomeView: View {
         .background(.white)
     }
 
-    // MARK: - Search Results
     var searchResultsView: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 if isSearching {
-                    HStack { Spacer(); ProgressView().tint(Color.snapshePurple).padding(24); Spacer() }
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .tint(Color.snapshePurple)
+                            .padding(24)
+                        Spacer()
+                    }
                 } else if searchResults.isEmpty {
                     VStack(spacing: 12) {
                         Spacer(minLength: 40)
-                        Image(systemName: "person.slash").font(.system(size: 40)).foregroundStyle(Color(hex: "#ddd"))
-                        Text("No users found").font(.system(size: 18, weight: .bold)).foregroundStyle(Color(hex: "#aaa"))
-                        Text("Try a different name or username.").font(.system(size: 14)).foregroundStyle(Color(hex: "#ccc"))
+
+                        Image(systemName: "person.slash")
+                            .font(.system(size: 40))
+                            .foregroundStyle(Color(hex: "#ddd"))
+
+                        Text("No users found")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(Color(hex: "#aaa"))
+
+                        Text("Try a different name or username.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color(hex: "#ccc"))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(40)
@@ -275,7 +299,9 @@ struct HomeView: View {
                     Text("Results")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color(hex: "#aaa"))
-                        .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 6)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 14)
+                        .padding(.bottom, 6)
 
                     ForEach(searchResults) { user in
                         UserSearchRow(user: user)
@@ -287,36 +313,53 @@ struct HomeView: View {
         .background(Color.white)
     }
 
-    // MARK: - Empty / Feed
     var emptyStateView: some View {
         VStack(spacing: 24) {
             Spacer()
+
             ZStack {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.snapsheBlack).frame(width: 80, height: 80)
+                    .fill(Color.snapsheBlack)
+                    .frame(width: 80, height: 80)
+
                 Image(systemName: "viewfinder")
-                    .font(.system(size: 36, weight: .medium)).foregroundStyle(.white)
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundStyle(.white)
             }
+
             Text("Shop from any photo or video")
-                .font(.system(size: 28, weight: .black)).foregroundStyle(Color.snapsheBlack)
+                .font(.system(size: 28, weight: .black))
+                .foregroundStyle(Color.snapsheBlack)
                 .multilineTextAlignment(.center)
+
             Text("Upload a photo or video, select an area, and discover visually similar products.")
-                .font(.system(size: 15)).foregroundStyle(Color(hex: "#888"))
-                .multilineTextAlignment(.center).padding(.horizontal, 36)
+                .font(.system(size: 15))
+                .foregroundStyle(Color(hex: "#888"))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 36)
+
             HStack(spacing: 12) {
                 Button { showSourcePicker = true } label: {
                     Label("Upload photo", systemImage: "camera.viewfinder")
                         .font(.system(size: 15, weight: .bold))
-                        .padding(.horizontal, 20).padding(.vertical, 13)
-                        .background(Color.snapsheBlack).foregroundStyle(.white).clipShape(Capsule())
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 13)
+                        .background(Color.snapsheBlack)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
                 }
+
                 Button { showVideoPicker = true } label: {
                     Label("Upload video", systemImage: "video.fill")
                         .font(.system(size: 15, weight: .bold))
-                        .padding(.horizontal, 20).padding(.vertical, 13)
-                        .background(Color.snapshePurple).foregroundStyle(.white).clipShape(Capsule())
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 13)
+                        .background(Color.snapshePurple)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
                 }
             }
+
             Spacer()
         }
         .background(Color.white)
@@ -328,37 +371,57 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Visual fashion discovery")
                         .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(Color.snapsheBlack.opacity(0.07)).clipShape(Capsule())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.snapsheBlack.opacity(0.07))
+                        .clipShape(Capsule())
+
                     Text("Tap to shop the look")
-                        .font(.system(size: 24, weight: .black)).foregroundStyle(Color.snapsheBlack)
+                        .font(.system(size: 24, weight: .black))
+                        .foregroundStyle(Color.snapsheBlack)
+
                     Text("Tap a photo or video to open visual search and find similar products.")
-                        .font(.system(size: 14)).foregroundStyle(Color(hex: "#888"))
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(hex: "#888"))
+
                     HStack(spacing: 10) {
                         Button { showSourcePicker = true } label: {
                             Label("Photo", systemImage: "camera.viewfinder")
                                 .font(.system(size: 14, weight: .bold))
-                                .padding(.horizontal, 16).padding(.vertical, 10)
-                                .background(Color.snapsheBlack).foregroundStyle(.white).clipShape(Capsule())
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color.snapsheBlack)
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
                         }
+
                         Button { showVideoPicker = true } label: {
                             Label("Video", systemImage: "video.fill")
                                 .font(.system(size: 14, weight: .bold))
-                                .padding(.horizontal, 16).padding(.vertical, 10)
-                                .background(Color.snapshePurple).foregroundStyle(.white).clipShape(Capsule())
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color.snapshePurple)
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
                         }
                     }
                     .padding(.top, 2)
                 }
-                .padding(.horizontal, 18).padding(.vertical, 18)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 18)
 
                 MasonryFeedGrid(items: vm.photos) { item in
-                    FeedItemCard(item: item) { selectedFeedItem = item }
+                    FeedItemCard(item: item) {
+                        selectedFeedItem = item
+                    }
                 }
-                .padding(.horizontal, 10).padding(.bottom, 24)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 24)
             }
         }
-        .refreshable { await vm.loadFeed(token: auth.token) }
+        .refreshable {
+            await vm.loadFeed(token: auth.token)
+        }
         .background(Color.white)
     }
 
@@ -368,9 +431,28 @@ struct HomeView: View {
         searchResults = r?.users ?? []
         isSearching = false
     }
+
+    private func makeServerPath(from url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else {
+            return nil
+        }
+
+        let base = APIService.baseURL
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        var path = url.absoluteString
+
+        if path.hasPrefix(base) {
+            path = String(path.dropFirst(base.count))
+        }
+
+        return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
 }
 
-// MARK: - User Search Row (tappable → opens PublicProfileView)
+// MARK: - User Search Row
+
 struct UserSearchRow: View {
     let user: SnapUser
     @State private var showProfile = false
@@ -381,17 +463,25 @@ struct UserSearchRow: View {
         } label: {
             HStack(spacing: 14) {
                 AvatarCircle(user: user, size: 46)
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text(user.displayName)
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Color.snapsheBlack)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.snapsheBlack)
+
                     Text("@\(user.username)")
-                        .font(.system(size: 13)).foregroundStyle(Color(hex: "#888"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color(hex: "#888"))
                 }
+
                 Spacer()
+
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13)).foregroundStyle(Color(hex: "#ccc"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color(hex: "#ccc"))
             }
-            .padding(.horizontal, 18).padding(.vertical, 12)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
             .background(Color.white)
         }
         .buttonStyle(.plain)
@@ -401,7 +491,8 @@ struct UserSearchRow: View {
     }
 }
 
-// MARK: - Feed Item Card (photo or video)
+// MARK: - Feed Item Card
+
 struct FeedItemCard: View {
     let item: FeedItem
     let onTap: () -> Void
@@ -414,13 +505,20 @@ struct FeedItemCard: View {
                         AsyncImage(url: url) { phase in
                             switch phase {
                             case .success(let img):
-                                img.resizable().scaledToFit()  // doğal oran → masonry
+                                img.resizable().scaledToFit()
+
                             case .failure:
                                 Color.snapsheGray
                                     .frame(height: 160)
-                                    .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                                    .overlay(
+                                        Image(systemName: "photo")
+                                            .foregroundStyle(.secondary)
+                                    )
+
                             default:
-                                Color.snapsheGray.frame(height: 160).shimmering()
+                                Color.snapsheGray
+                                    .frame(height: 160)
+                                    .shimmering()
                             }
                         }
                     } else if item.mediaType == .video {
@@ -432,22 +530,32 @@ struct FeedItemCard: View {
                                     .foregroundStyle(.white.opacity(0.7))
                             )
                     } else {
-                        Color.snapsheGray.frame(height: 160)
-                            .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                        Color.snapsheGray
+                            .frame(height: 160)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundStyle(.secondary)
+                            )
                     }
                 }
 
-                // Bottom badge
                 HStack(spacing: 5) {
                     if item.mediaType == .video {
                         Image(systemName: "play.fill")
                             .font(.system(size: 8, weight: .bold))
                     }
+
                     Text(item.mediaType == .video ? "Video Search" : "Visual Search")
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
                 }
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(item.mediaType == .video ? Color.snapshePurple.opacity(0.9) : Color.snapsheBlack.opacity(0.75))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    item.mediaType == .video
+                    ? Color.snapshePurple.opacity(0.9)
+                    : Color.snapsheBlack.opacity(0.75)
+                )
                 .clipShape(Capsule())
                 .padding(8)
             }
@@ -457,10 +565,10 @@ struct FeedItemCard: View {
     }
 }
 
-// FeedPhotoCard kept for backwards compatibility in ProfileView etc.
 typealias FeedPhotoCard = FeedItemCard
 
-// MARK: - Masonry Grid (Pinterest tarzı, farklı yükseklikte 2 kolon)
+// MARK: - Masonry Grid
+
 struct MasonryFeedGrid<Content: View>: View {
     let items: [FeedItem]
     let content: (FeedItem) -> Content
@@ -472,13 +580,12 @@ struct MasonryFeedGrid<Content: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            // Sol kolon: 0, 2, 4, ...
             LazyVStack(spacing: 6) {
                 ForEach(Array(items.enumerated().filter { $0.offset % 2 == 0 }.map { $0.element })) { item in
                     content(item)
                 }
             }
-            // Sağ kolon: 1, 3, 5, ...
+
             LazyVStack(spacing: 6) {
                 ForEach(Array(items.enumerated().filter { $0.offset % 2 == 1 }.map { $0.element })) { item in
                     content(item)
@@ -489,8 +596,10 @@ struct MasonryFeedGrid<Content: View>: View {
 }
 
 // MARK: - VideoTransferable
+
 struct VideoTransferable: Transferable {
     let url: URL
+
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { movie in
             SentTransferredFile(movie.url)
@@ -498,7 +607,9 @@ struct VideoTransferable: Transferable {
             let dest = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension("mp4")
+
             try FileManager.default.copyItem(at: received.file, to: dest)
+
             return VideoTransferable(url: dest)
         }
     }
