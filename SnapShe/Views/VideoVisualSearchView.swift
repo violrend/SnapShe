@@ -242,9 +242,46 @@ struct VideoVisualSearchView: View {
 
     // MARK: - Player setup
     func setupPlayer() {
-        let p = AVPlayer(url: videoURL)
+        // Eğer remote URL ise önce local'e indir, sonra oynat
+        if videoURL.scheme == "https" || videoURL.scheme == "http" {
+            statusMessage = "Video downloading…"
+            Task { await downloadAndPlay() }
+        } else {
+            setupLocalPlayer(url: videoURL)
+        }
+
+        // serverVideoPath varsa (feed'den açılan veya Instagram) upload etme
+        if serverVideoPath != nil {
+            vm.serverVideoPath = serverVideoPath ?? ""
+        }
+    }
+
+    func downloadAndPlay() async {
+        do {
+            let (localURL, _) = try await URLSession.shared.download(from: videoURL)
+            // Temp klasörüne taşı (uzantı ekle)
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+            try FileManager.default.moveItem(at: localURL, to: dest)
+            await MainActor.run {
+                statusMessage = "Video ready."
+                setupLocalPlayer(url: dest)
+                // serverVideoPath yoksa upload et
+                if serverVideoPath == nil {
+                    Task { await vm.uploadVideo(videoURL: dest, token: auth.token) }
+                }
+            }
+        } catch {
+            await MainActor.run {
+                statusMessage = "Video could not be downloaded: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setupLocalPlayer(url: URL) {
+        let p = AVPlayer(url: url)
         player = p
-        statusMessage = "Video ready. Play or scrub, select area, then press Search."
 
         // Observe current time
         let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
@@ -254,20 +291,30 @@ struct VideoVisualSearchView: View {
 
         // Get duration
         Task {
-            if let dur = try? await p.currentItem?.asset.load(.duration) {
-                duration = dur.seconds.isFinite ? dur.seconds : 0
-                // Video 30s sınırı
-                if duration > 31 {
-                    statusMessage = "Select a video with a maximum length of 30 seconds."
+            for _ in 0..<40 {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                let secs = p.currentItem?.duration.seconds ?? 0
+                if secs.isFinite && secs > 0 {
+                    await MainActor.run {
+                        duration = secs
+                        statusMessage = secs > 31
+                            ? "Select a video with a maximum length of 30 seconds."
+                            : "Pause on a frame, select the area, then press Search."
+                    }
+                    return
                 }
+            }
+            // Son deneme: asset'ten yükle
+            if let asset = p.currentItem?.asset,
+               let dur = try? await asset.load(.duration),
+               dur.seconds.isFinite && dur.seconds > 0 {
+                await MainActor.run { duration = dur.seconds }
             }
         }
 
-        // Upload video to server (for feed save)
-        if serverVideoPath == nil {
-            Task { await vm.uploadVideo(videoURL: videoURL, token: auth.token) }
-        } else {
-            vm.serverVideoPath = serverVideoPath ?? ""
+        // Local video ise upload et
+        if serverVideoPath == nil && (url.scheme == "file" || url.isFileURL) {
+            Task { await vm.uploadVideo(videoURL: url, token: auth.token) }
         }
     }
 
