@@ -78,9 +78,7 @@ struct FeedItem: Codable, Identifiable {
     let id: String
     let username: String
     let name: String
-    // photo fields
     var image: String?
-    // video fields
     var video: String?
     var thumbnail: String?
     let filename: String
@@ -89,10 +87,8 @@ struct FeedItem: Codable, Identifiable {
 
     var mediaType: FeedMediaType { type ?? (video != nil && !(video?.isEmpty ?? true) ? .video : .photo) }
 
-    /// URL to show as thumbnail in the feed grid
     var coverURL: URL? {
         if mediaType == .video {
-            // prefer explicit thumbnail, else nil (show video icon placeholder)
             if let t = thumbnail, !t.isEmpty { return URL(string: "\(APIService.baseURL)/\(t)") }
             return nil
         }
@@ -100,7 +96,6 @@ struct FeedItem: Codable, Identifiable {
         return URL(string: "\(APIService.baseURL)/\(img)")
     }
 
-    /// URL for the actual media (video file or photo)
     var mediaURL: URL? {
         if mediaType == .video {
             guard let v = video, !v.isEmpty else { return nil }
@@ -116,7 +111,6 @@ struct FeedItem: Codable, Identifiable {
     }
 }
 
-// Backward-compat typealias so existing code that uses FeedPhoto still compiles
 typealias FeedPhoto = FeedItem
 
 struct FeedResponse: Codable {
@@ -132,7 +126,6 @@ struct GenericResponse: Codable {
     let avatar: String?
 }
 
-// Token-bearing auth responses
 struct LoginResponseWithToken: Codable {
     let ok: Bool; let user: SnapUser?; let token: String?; let error: String?
 }
@@ -153,10 +146,66 @@ struct ProfileResponse: Codable {
     let user: SnapUser?
     let uploads: [FeedItem]?
     let isOwn: Bool?
+    let isFollowing: Bool?
+    let followerCount: Int?
+    let followingCount: Int?
     let error: String?
     enum CodingKeys: String, CodingKey {
         case ok, user, uploads, error
         case isOwn = "is_own"
+        case isFollowing = "is_following"
+        case followerCount = "follower_count"
+        case followingCount = "following_count"
+    }
+}
+
+// MARK: - Follow / Unfollow
+struct FollowResponse: Codable {
+    let ok: Bool
+    let following: Bool?
+    let followerCount: Int?
+    let error: String?
+    enum CodingKeys: String, CodingKey {
+        case ok, error, following
+        case followerCount = "follower_count"
+    }
+}
+
+// MARK: - Following Feed Response
+struct FollowingFeedResponse: Codable {
+    let ok: Bool
+    let photos: [FeedItem]?
+    let error: String?
+}
+
+// MARK: - In-App Notifications
+struct AppNotification: Codable, Identifiable {
+    let id: String
+    let type: String
+    let fromUsername: String
+    let fromName: String
+    let fromAvatar: String?
+    let createdAt: String
+    var isRead: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, type
+        case fromUsername = "from_username"
+        case fromName     = "from_name"
+        case fromAvatar   = "from_avatar"
+        case createdAt    = "created_at"
+        case isRead       = "is_read"
+    }
+}
+
+struct NotificationsResponse: Codable {
+    let ok: Bool
+    let notifications: [AppNotification]?
+    let unreadCount: Int?
+    let error: String?
+    enum CodingKeys: String, CodingKey {
+        case ok, notifications, error
+        case unreadCount = "unread_count"
     }
 }
 
@@ -186,12 +235,10 @@ struct InstagramFetchResponse: Codable {
     }
 }
 
-// MARK: - Instagram Fetch Error
 struct InstagramFetchError: Error {
     let message: String
 }
 
-// MARK: - IdentifiableString (sheet binding helper)
 struct IdentifiableString: Identifiable {
     let id = UUID()
     let value: String
