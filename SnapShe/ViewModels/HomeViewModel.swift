@@ -31,14 +31,38 @@ class HomeViewModel: ObservableObject {
         isLoading = false
     }
 
-    /// VisualSearchView kapanınca bu çağrılır, feed'i sessizce günceller
-    func silentRefresh(token: String) {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            guard let response = try? await APIService.shared.fetchFeed(token: token),
-                  response.ok else { return }
-            guard !Task.isCancelled else { return }
-            photos = response.photos ?? []
+    func silentRefresh(token: String) async {
+        guard let response = try? await APIService.shared.fetchFeed(token: token),
+              response.ok else { return }
+        photos = response.photos ?? []
+    }
+}
+
+// MARK: - Following Feed ViewModel
+
+@MainActor
+class FollowingFeedViewModel: ObservableObject {
+    @Published var photos: [FeedItem] = []
+    @Published var isLoading = false
+    @Published var error: String? = nil
+    @Published var isEmpty = false
+
+    func loadFeed(token: String) async {
+        isLoading = true
+        error = nil
+        isEmpty = false
+        do {
+            let response = try await APIService.shared.fetchFollowingFeed(token: token)
+            if response.ok {
+                let items = response.photos ?? []
+                photos = items
+                isEmpty = items.isEmpty
+            } else {
+                error = response.error ?? "Failed to load feed."
+            }
+        } catch {
+            self.error = "Network error."
         }
+        isLoading = false
     }
 }
