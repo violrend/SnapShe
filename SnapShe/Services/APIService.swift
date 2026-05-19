@@ -187,6 +187,50 @@ class APIService {
         return try await decode(req)
     }
 
+    // MARK: - Following Feed
+    func fetchFollowingFeed(token: String) async throws -> FollowingFeedResponse {
+        return try await decode(get("\(Self.baseURL)/api_mobile/following-feed.php", token: token))
+    }
+
+    // MARK: - Follow / Unfollow
+    func followUser(username: String, token: String) async throws -> FollowResponse {
+        var req = post("\(Self.baseURL)/api_mobile/follow.php", token: token)
+        req.httpBody = "action=follow&username=\(username.urlEnc)".data(using: .utf8)
+        return try await decode(req)
+    }
+
+    func unfollowUser(username: String, token: String) async throws -> FollowResponse {
+        var req = post("\(Self.baseURL)/api_mobile/follow.php", token: token)
+        req.httpBody = "action=unfollow&username=\(username.urlEnc)".data(using: .utf8)
+        return try await decode(req)
+    }
+
+    func fetchFollowers(username: String, token: String) async throws -> UserSearchResponse {
+        return try await decode(get("\(Self.baseURL)/api_mobile/follow-list.php?type=followers&username=\(username.urlEnc)", token: token))
+    }
+
+    func fetchFollowing(username: String, token: String) async throws -> UserSearchResponse {
+        return try await decode(get("\(Self.baseURL)/api_mobile/follow-list.php?type=following&username=\(username.urlEnc)", token: token))
+    }
+
+    // MARK: - Delete Upload
+    func deleteUpload(uploadId: String, token: String) async throws -> GenericResponse {
+        var req = post("\(Self.baseURL)/api_mobile/delete-upload.php", token: token)
+        req.httpBody = "upload_id=\(uploadId.urlEnc)".data(using: .utf8)
+        return try await decode(req)
+    }
+
+    // MARK: - Notifications
+    func fetchNotifications(token: String) async throws -> NotificationsResponse {
+        return try await decode(get("\(Self.baseURL)/api_mobile/notifications.php", token: token))
+    }
+
+    func markNotificationsRead(token: String) async throws -> GenericResponse {
+        var req = post("\(Self.baseURL)/api_mobile/notifications.php", token: token)
+        req.httpBody = "action=mark_read".data(using: .utf8)
+        return try await decode(req)
+    }
+
     // MARK: - Private helpers
     private func post(_ urlStr: String, token: String? = nil) -> URLRequest {
         var req = URLRequest(url: URL(string: urlStr)!)
