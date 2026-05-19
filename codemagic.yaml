@@ -15,7 +15,7 @@ workflows:
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
-        APP_VERSION: "1.0.6"
+        APP_VERSION: "1.0.7"
 
       ios_signing:
         distribution_type: app_store
@@ -39,7 +39,11 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          BUILD_NUMBER="${CM_BUILD_NUMBER:-30}"
+          BUILD_NUMBER="${CM_BUILD_NUMBER}"
+
+          if [ -z "$BUILD_NUMBER" ]; then
+            BUILD_NUMBER="31"
+          fi
 
           echo "Setting CFBundleShortVersionString=$APP_VERSION"
           echo "Setting CFBundleVersion=$BUILD_NUMBER"
@@ -54,6 +58,18 @@ workflows:
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
 
+      - name: Install signing certificates
+        script: |
+          keychain initialize
+
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+
+          keychain add-certificates
+
+          xcode-project use-profiles
+
       - name: Create export options
         script: |
           cat > /Users/builder/export_options.plist <<EOF
@@ -63,19 +79,22 @@ workflows:
           <dict>
 
             <key>method</key>
-            <string>app-store-connect</string>
+            <string>app-store</string>
+
+            <key>signingStyle</key>
+            <string>automatic</string>
 
             <key>teamID</key>
             <string>M3RM3YA99H</string>
 
-            <key>signingStyle</key>
-            <string>manual</string>
+            <key>uploadBitcode</key>
+            <false/>
 
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.snapshe.app</key>
-              <string>Snapshe</string>
-            </dict>
+            <key>compileBitcode</key>
+            <false/>
+
+            <key>destination</key>
+            <string>export</string>
 
           </dict>
           </plist>
@@ -85,8 +104,6 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          xcode-project use-profiles
-
           xcodebuild clean archive \
             -project "$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
@@ -94,10 +111,8 @@ workflows:
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
-            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="Snapshe"
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            CODE_SIGN_STYLE=Automatic
 
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
