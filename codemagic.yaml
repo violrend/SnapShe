@@ -26,7 +26,6 @@ workflows:
         - push
 
     scripts:
-
       - name: Install CocoaPods
         script: |
           cd $CM_BUILD_DIR
@@ -39,11 +38,7 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          BUILD_NUMBER="${CM_BUILD_NUMBER}"
-
-          if [ -z "$BUILD_NUMBER" ]; then
-            BUILD_NUMBER="31"
-          fi
+          BUILD_NUMBER="${CM_BUILD_NUMBER:-31}"
 
           echo "Setting CFBundleShortVersionString=$APP_VERSION"
           echo "Setting CFBundleVersion=$BUILD_NUMBER"
@@ -77,25 +72,20 @@ workflows:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-
             <key>method</key>
-            <string>app-store</string>
-
-            <key>signingStyle</key>
-            <string>automatic</string>
+            <string>app-store-connect</string>
 
             <key>teamID</key>
             <string>M3RM3YA99H</string>
 
-            <key>uploadBitcode</key>
-            <false/>
+            <key>signingStyle</key>
+            <string>manual</string>
 
-            <key>compileBitcode</key>
-            <false/>
-
-            <key>destination</key>
-            <string>export</string>
-
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.snapshe.app</key>
+              <string>Snapshe</string>
+            </dict>
           </dict>
           </plist>
           EOF
@@ -112,7 +102,9 @@ workflows:
             -destination "generic/platform=iOS" \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
-            CODE_SIGN_STYLE=Automatic
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="Snapshe"
 
           xcodebuild -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/SnapShe.xcarchive" \
