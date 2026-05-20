@@ -1161,8 +1161,9 @@ struct DiscoverView: View {
                             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                                 proxy.scrollTo(newIndex, anchor: .top)
                             }
-                            // Duration will be reported by SnapCard via onDurationKnown
-                            restartAutoTimer(duration: nil)
+                            // Reset duration — new card's video will report its own duration
+                            currentItemDuration = nil
+                            startAutoTimer()
                             if newIndex >= vm.items.count - 2 {
                                 Task { await vm.loadMore(token: auth.token) }
                             }
@@ -1269,17 +1270,21 @@ struct DiscoverView: View {
 
     func startAutoTimer() {
         stopAutoTimer()
+        let currentItem = vm.items.indices.contains(currentIndex) ? vm.items[currentIndex] : nil
+        // For videos: wait for real duration from onDurationKnown before starting timer
+        // For photos: use defaultInterval immediately
+        if currentItem?.mediaType == .video && currentItemDuration == nil {
+            return // duration not known yet — onDurationKnown will call restartAutoTimer
+        }
         let interval = currentItemDuration ?? defaultInterval
         autoTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
             DispatchQueue.main.async {
-                guard !vm.items.isEmpty else { return }
+                guard !self.vm.items.isEmpty else { return }
                 withAnimation {
-                    if currentIndex < vm.items.count - 1 {
-                        currentIndex += 1
+                    if self.currentIndex < self.vm.items.count - 1 {
+                        self.currentIndex += 1
                     }
-                    // No loop-back — prevents re-rendering same cards
                 }
-                // startAutoTimer will be called again via onChange(of: currentIndex) -> restartAutoTimer
             }
         }
     }
