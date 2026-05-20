@@ -15,7 +15,7 @@ workflows:
         XCODE_SCHEME: "SnapShe"
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
-        APP_VERSION: "1.0.7"
+        APP_VERSION: "1.0.8"
 
       ios_signing:
         distribution_type: app_store
@@ -38,7 +38,7 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          BUILD_NUMBER="${CM_BUILD_NUMBER:-31}"
+          BUILD_NUMBER="${CM_BUILD_NUMBER:-32}"
 
           echo "Setting CFBundleShortVersionString=$APP_VERSION"
           echo "Setting CFBundleVersion=$BUILD_NUMBER"
