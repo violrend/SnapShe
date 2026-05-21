@@ -24,6 +24,7 @@ struct HomeView: View {
 
     @State private var videoForSearch: URL? = nil
     @State private var showVideoSearch = false
+    @State private var showLiveCamera = false
 
     @State private var showInstagramFetch = false
     @State private var instagramImageURL: String? = nil
@@ -124,6 +125,10 @@ struct HomeView: View {
                 showCamera = false
                 onVisualSearch(image)
             }
+        }
+        .fullScreenCover(isPresented: $showLiveCamera) {
+            LiveCameraView()
+                .environmentObject(auth)
         }
         .sheet(item: $selectedFeedItem) { item in
             if item.mediaType == .video, let url = item.mediaURL {
@@ -310,6 +315,23 @@ struct HomeView: View {
                         Image(systemName: "camera")
                             .font(.system(size: 16))
                             .foregroundStyle(.white)
+                    }
+                }
+
+                // ── LIVE butonu ──────────────────────────────────
+                Button { showLiveCamera = true } label: {
+                    ZStack {
+                        Capsule()
+                            .fill(Color(hex: "#FF3B30"))
+                            .frame(width: 56, height: 40)
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 7, height: 7)
+                            Text("LIVE")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundStyle(.white)
+                        }
                     }
                 }
             }
@@ -1588,5 +1610,646 @@ class DiscoverViewModel: ObservableObject {
 
     func loadMore(token: String) async {
         // No-op: backend returns same feed, duplicates prevented
+    }
+}
+
+// MARK: - LiveCameraViewModel
+/// Kameradan belirli aralıklarla frame yakalar ve SearchAPI Google Lens'e gönderir.
+@MainActor
+class LiveCameraViewModel: ObservableObject {
+    @Published var products: [Product] = []
+    @Published var isSearching = false
+    @Published var error: String? = nil
+    @Published var lastSearchTime: Date? = nil
+
+    /// Arama aralığı (saniye) — çok sık istek atmamak için
+    let searchInterval: TimeInterval = 2.5
+
+    private var searchTask: Task<Void, Never>? = nil
+
+    func canSearch() -> Bool {
+        guard let last = lastSearchTime else { return true }
+        return Date().timeIntervalSince(last) >= searchInterval
+    }
+
+    func performLiveSearch(frameData: Data, crop: CGRect, keyword: String, token: String) async {
+        guard !isSearching else { return }
+        isSearching = true
+        error = nil
+        lastSearchTime = Date()
+
+        let cropString = "\(String(format: "%.4f", crop.minX));\(String(format: "%.4f", crop.minY));\(String(format: "%.4f", crop.maxX));\(String(format: "%.4f", crop.maxY))"
+
+        do {
+            let response = try await APIService.shared.visualSearch(
+                imageData: frameData,
+                imageURL: nil,
+                crop: cropString,
+                keyword: keyword.isEmpty ? nil : keyword,
+                token: token
+            )
+            if response.ok {
+                if let newProducts = response.products, !newProducts.isEmpty {
+                    products = newProducts
+                }
+                self.error = nil
+            } else {
+                self.error = response.error ?? "Search failed."
+            }
+        } catch {
+            // Sessiz hata — live modda küçük network hatası akışı kesmemeli
+            if products.isEmpty {
+                self.error = "Connection error."
+            }
+        }
+
+        isSearching = false
+    }
+}
+
+// MARK: - LiveCameraView
+/// Kullanıcı kamerayı açar, karşısındaki kişinin üzerindeki
+/// ürünleri fotoğraf/video çekmeden canlı olarak Google Lens ile arar.
+struct LiveCameraView: View {
+    @EnvironmentObject var auth: AuthManager
+    @Environment(\.dismiss) var dismiss
+
+    @StateObject private var vm = LiveCameraViewModel()
+    @StateObject private var captureSession = LiveCaptureSession()
+
+    @State private var cropRect = CGRect(x: 0.1, y: 0.08, width: 0.8, height: 0.55)
+    @State private var keyword = ""
+    @State private var showSaveModal = false
+    @State private var productToSave: Product? = nil
+    @State private var isPaused = false
+    @State private var frameTimer: Timer? = nil
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+
+                // ── TOOLBAR ──────────────────────────────────────────
+                HStack(spacing: 12) {
+                    Button { dismiss() } label: {
+                        ZStack {
+                            Circle().fill(Color.snapsheGray).frame(width: 36, height: 36)
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            if !isPaused {
+                                Circle()
+                                    .fill(Color.snapsheRed)
+                                    .frame(width: 7, height: 7)
+                            }
+                            Text(isPaused ? "Paused" : "Live Search")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+                        }
+                        Text(vm.isSearching
+                            ? "Searching for products…"
+                            : (vm.products.isEmpty ? "Point camera at an outfit" : "\(vm.products.count) products found"))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: "#888"))
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    // Pause / Resume
+                    Button {
+                        isPaused.toggle()
+                        if isPaused { stopFrameTimer() } else { startFrameTimer() }
+                    } label: {
+                        Text(isPaused ? "Resume" : "Pause")
+                            .font(.system(size: 14, weight: .bold))
+                            .padding(.horizontal, 16).padding(.vertical, 9)
+                            .background(isPaused ? Color.snapshePurple : Color.snapsheGray)
+                            .foregroundStyle(isPaused ? .white : Color.snapsheBlack)
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.white)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(Color.snapsheBorder).frame(height: 1)
+                }
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+
+                        // ── CAMERA + CROP ─────────────────────────────────
+                        ZStack {
+                            LivePreviewView(session: captureSession.session)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: UIScreen.main.bounds.width * 1.05)
+                                .clipped()
+
+                            GeometryReader { geo in
+                                LiveCropOverlay(cropRect: $cropRect, size: geo.size)
+                            }
+                            .frame(height: UIScreen.main.bounds.width * 1.05)
+
+                            // Bottom pill
+                            VStack {
+                                Spacer()
+                                Group {
+                                    if vm.isSearching {
+                                        HStack(spacing: 6) {
+                                            ProgressView().tint(.white).scaleEffect(0.75)
+                                            Text("Searching…")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    } else {
+                                        Text("Drag or resize selected area")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                                .padding(.horizontal, 18).padding(.vertical, 9)
+                                .background(Color.snapsheBlack.opacity(0.82))
+                                .clipShape(Capsule())
+                                .padding(.bottom, 14)
+                            }
+                        }
+
+                        // ── SHOP THE LOOK ─────────────────────────────────
+                        VStack(alignment: .leading, spacing: 0) {
+
+                            // Header
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Shop the look")
+                                        .font(.system(size: 22, weight: .black))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    Text("Products update automatically as you move the camera.")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Color(hex: "#888"))
+                                }
+                                Spacer()
+                                if vm.isSearching {
+                                    ProgressView().tint(Color.snapshePurple).scaleEffect(0.9)
+                                } else if !vm.products.isEmpty {
+                                    Text("\(vm.products.count)")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Color(hex: "#888"))
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.top, 18)
+                            .padding(.bottom, 12)
+
+                            // Keyword bar
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Color(hex: "#999"))
+                                TextField("Refine search (e.g. jacket, sneakers)", text: $keyword)
+                                    .font(.system(size: 15))
+                                    .autocorrectionDisabled()
+                                    .autocapitalization(.none)
+                                if !keyword.isEmpty {
+                                    Button { keyword = "" } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(Color(hex: "#ccc"))
+                                    }
+                                }
+                            }
+                            .padding(13)
+                            .background(Color.snapsheGray)
+                            .clipShape(Capsule())
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 14)
+
+                            // Error
+                            if let err = vm.error {
+                                SnapSheErrorBox(message: err)
+                                    .padding(.horizontal, 16).padding(.bottom, 12)
+                            }
+
+                            // Empty state
+                            if vm.products.isEmpty && !vm.isSearching && vm.error == nil {
+                                VStack(spacing: 14) {
+                                    Image(systemName: "sparkle.magnifyingglass")
+                                        .font(.system(size: 36))
+                                        .foregroundStyle(Color(hex: "#ccc"))
+                                    Text("Point the selection area at someone's outfit")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(Color(hex: "#aaa"))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 24)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 40)
+                            }
+
+                            // ── Horizontal product scroll — no layout conflict ──
+                            if !vm.products.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        ForEach(vm.products) { product in
+                                            LiveHorizontalCard(product: product) {
+                                                productToSave = product
+                                                showSaveModal = true
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 4)
+                                }
+                                .padding(.bottom, 32)
+                            }
+                        }
+                        .background(Color.white)
+                    }
+                }
+            }
+            .background(Color.white)
+            .navigationBarHidden(true)
+        }
+        .onAppear {
+            captureSession.start()
+            startFrameTimer()
+        }
+        .onDisappear {
+            stopFrameTimer()
+            captureSession.stop()
+        }
+        .sheet(isPresented: $showSaveModal) {
+            if let product = productToSave {
+                SaveToCollectionView(product: product)
+            }
+        }
+    }
+
+    // MARK: - Frame Timer
+
+    func startFrameTimer() {
+        stopFrameTimer()
+        frameTimer = Timer.scheduledTimer(withTimeInterval: vm.searchInterval, repeats: true) { _ in
+            guard !isPaused else { return }
+            Task { @MainActor in
+                await captureAndSearch()
+            }
+        }
+    }
+
+    func stopFrameTimer() {
+        frameTimer?.invalidate()
+        frameTimer = nil
+    }
+
+    func captureAndSearch() async {
+        guard vm.canSearch() else { return }
+        guard let frameData = await captureSession.captureFrame(crop: cropRect) else { return }
+        await vm.performLiveSearch(frameData: frameData, crop: cropRect, keyword: keyword, token: auth.token)
+    }
+}
+
+// MARK: - LiveCropOverlay
+/// Drag to move, corner handles to resize — matches VideoCropView style.
+struct LiveCropOverlay: View {
+    @Binding var cropRect: CGRect
+    let size: CGSize
+
+    @State private var isDragging = false
+    @State private var dragStart: CGPoint = .zero
+    @State private var cropStart: CGRect = .zero
+    @State private var activeCorner: CropCorner? = nil
+
+    enum CropCorner { case tl, tr, bl, br }
+
+    var body: some View {
+        let box = cropPx()
+        ZStack {
+            // Dim outside
+            Color.black.opacity(0.5)
+                .mask(
+                    Rectangle().fill(.white)
+                        .overlay(
+                            Rectangle()
+                                .frame(width: box.width, height: box.height)
+                                .position(x: box.midX, y: box.midY)
+                                .blendMode(.destinationOut)
+                        )
+                        .compositingGroup()
+                )
+
+            // Solid border
+            Rectangle()
+                .stroke(Color.white, lineWidth: 2)
+                .frame(width: box.width, height: box.height)
+                .position(x: box.midX, y: box.midY)
+
+            // Dashed inner border — same as VideoCropView
+            Rectangle()
+                .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [8, 5]))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .frame(width: max(0, box.width - 4), height: max(0, box.height - 4))
+                .position(x: box.midX, y: box.midY)
+
+            // Corner handles — same white circle style as VideoCropView
+            Group {
+                cropCornerHandle(at: CGPoint(x: box.minX, y: box.minY))
+                cropCornerHandle(at: CGPoint(x: box.maxX, y: box.minY))
+                cropCornerHandle(at: CGPoint(x: box.minX, y: box.maxY))
+                cropCornerHandle(at: CGPoint(x: box.maxX, y: box.maxY))
+            }
+
+            // Full gesture layer
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { val in
+                            if !isDragging {
+                                isDragging = true
+                                dragStart = val.startLocation
+                                cropStart = cropRect
+                                activeCorner = detectCorner(at: val.startLocation)
+                            }
+                            updateCrop(location: val.location)
+                        }
+                        .onEnded { _ in
+                            isDragging = false
+                            activeCorner = nil
+                        }
+                )
+        }
+    }
+
+    func cropPx() -> CGRect {
+        CGRect(
+            x: cropRect.minX * size.width,
+            y: cropRect.minY * size.height,
+            width: cropRect.width * size.width,
+            height: cropRect.height * size.height
+        )
+    }
+
+    func cropCornerHandle(at pos: CGPoint) -> some View {
+        ZStack {
+            Circle().fill(Color.white).frame(width: 18, height: 18)
+            Circle().stroke(Color.white.opacity(0.4), lineWidth: 2).frame(width: 26, height: 26)
+        }
+        .shadow(color: .black.opacity(0.3), radius: 4)
+        .position(x: pos.x, y: pos.y)
+    }
+
+    func detectCorner(at pt: CGPoint) -> CropCorner? {
+        let box = cropPx()
+        let d: CGFloat = 34
+        let pairs: [(CGPoint, CropCorner)] = [
+            (CGPoint(x: box.minX, y: box.minY), .tl),
+            (CGPoint(x: box.maxX, y: box.minY), .tr),
+            (CGPoint(x: box.minX, y: box.maxY), .bl),
+            (CGPoint(x: box.maxX, y: box.maxY), .br),
+        ]
+        return pairs.first { abs(pt.x - $0.0.x) < d && abs(pt.y - $0.0.y) < d }?.1
+    }
+
+    func updateCrop(location: CGPoint) {
+        let dx = (location.x - dragStart.x) / size.width
+        let dy = (location.y - dragStart.y) / size.height
+        let minSize: CGFloat = 0.1
+        var r = cropStart
+
+        switch activeCorner {
+        case .none:
+            r.origin.x = max(0, min(cropStart.minX + dx, 1 - cropStart.width))
+            r.origin.y = max(0, min(cropStart.minY + dy, 1 - cropStart.height))
+        case .tl:
+            let nx = min(cropStart.maxX - minSize, cropStart.minX + dx)
+            let ny = min(cropStart.maxY - minSize, cropStart.minY + dy)
+            r = CGRect(x: max(0, nx), y: max(0, ny),
+                       width: cropStart.maxX - max(0, nx),
+                       height: cropStart.maxY - max(0, ny))
+        case .tr:
+            let ny = min(cropStart.maxY - minSize, cropStart.minY + dy)
+            r = CGRect(x: cropStart.minX, y: max(0, ny),
+                       width: min(cropStart.width + dx, 1 - cropStart.minX),
+                       height: cropStart.maxY - max(0, ny))
+        case .bl:
+            let nx = min(cropStart.maxX - minSize, cropStart.minX + dx)
+            r = CGRect(x: max(0, nx), y: cropStart.minY,
+                       width: cropStart.maxX - max(0, nx),
+                       height: min(cropStart.height + dy, 1 - cropStart.minY))
+        case .br:
+            r = CGRect(x: cropStart.minX, y: cropStart.minY,
+                       width: min(cropStart.width + dx, 1 - cropStart.minX),
+                       height: min(cropStart.height + dy, 1 - cropStart.minY))
+        case .some(_):
+            break
+        }
+        cropRect = r
+    }
+}
+
+// MARK: - LiveHorizontalCard
+/// App-themed horizontal scroll card. Fixed width = no overflow.
+struct LiveHorizontalCard: View {
+    let product: Product
+    let onSave: () -> Void
+
+    private let cardW: CGFloat = 150
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+
+            ZStack(alignment: .bottomTrailing) {
+                AsyncImage(url: product.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                            .scaledToFill()
+                            .frame(width: cardW, height: 150)
+                            .clipped()
+                    case .failure:
+                        Color.snapsheGray
+                            .frame(width: cardW, height: 150)
+                            .overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                    default:
+                        Color.snapsheGray
+                            .frame(width: cardW, height: 150)
+                            .shimmering()
+                    }
+                }
+                .frame(width: cardW, height: 150)
+                .clipped()
+
+                if !product.price.isEmpty {
+                    Text(product.price)
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.snapsheBlack.opacity(0.82))
+                        .clipShape(Capsule())
+                        .padding(7)
+                }
+            }
+            .frame(width: cardW, height: 150)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let url = APIService.affiliateURL(for: product.link) {
+                    UIApplication.shared.open(url)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(product.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.snapsheBlack)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(product.source)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(hex: "#999"))
+                    .lineLimit(1)
+
+                Button(action: onSave) {
+                    Text("Save")
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(Color.snapsheRed)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+                .padding(.top, 4)
+                .simultaneousGesture(TapGesture().onEnded { _ in })
+            }
+            .padding(10)
+        }
+        .frame(width: cardW)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: Color.snapsheBlack.opacity(0.07), radius: 8, y: 2)
+    }
+}
+
+// MARK: - LiveCaptureSession
+/// AVCaptureSession yönetir; istenen anda JPEG frame yakalar ve
+/// crops the selected area and returns it.
+
+class LiveCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    let session = AVCaptureSession()
+    private let output = AVCaptureVideoDataOutput()
+    private let queue = DispatchQueue(label: "live.capture.queue")
+    private var latestSampleBuffer: CMSampleBuffer?
+    private let bufferLock = NSLock()
+
+    override init() {
+        super.init()
+        setupSession()
+    }
+
+    private func setupSession() {
+        session.sessionPreset = .high
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else { return }
+        session.addInput(input)
+
+        output.setSampleBufferDelegate(self, queue: queue)
+        output.alwaysDiscardsLateVideoFrames = true
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+        }
+
+        // Dikey yönlendirme
+        if let conn = output.connection(with: .video) {
+            if conn.isVideoOrientationSupported {
+                conn.videoOrientation = .portrait
+            }
+        }
+    }
+
+    func start() {
+        guard !session.isRunning else { return }
+        queue.async { self.session.startRunning() }
+    }
+
+    func stop() {
+        guard session.isRunning else { return }
+        queue.async { self.session.stopRunning() }
+    }
+
+    // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        bufferLock.lock()
+        latestSampleBuffer = sampleBuffer
+        bufferLock.unlock()
+    }
+
+    // MARK: - Frame yakala + crop
+
+    func captureFrame(crop: CGRect) async -> Data? {
+        await Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return nil }
+            self.bufferLock.lock()
+            let buffer = self.latestSampleBuffer
+            self.bufferLock.unlock()
+
+            guard let sb = buffer,
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(sb) else { return nil }
+
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            let context = CIContext()
+            guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+
+            // Crop uygula
+            let fullW = CGFloat(cgImage.width)
+            let fullH = CGFloat(cgImage.height)
+            let cropCG = CGRect(
+                x: crop.minX * fullW,
+                y: crop.minY * fullH,
+                width: crop.width * fullW,
+                height: crop.height * fullH
+            )
+
+            let cropped: CGImage
+            if let c = cgImage.cropping(to: cropCG) {
+                cropped = c
+            } else {
+                cropped = cgImage
+            }
+
+            let uiImage = UIImage(cgImage: cropped, scale: 1.0, orientation: .up)
+            return uiImage.jpegData(compressionQuality: 0.82)
+        }.value
+    }
+}
+
+// MARK: - LivePreviewView
+/// AVCaptureSession'u SwiftUI'ya köprüler.
+
+struct LivePreviewView: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewUIView {
+        let view = PreviewUIView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewUIView, context: Context) {
+        uiView.previewLayer.session = session
+    }
+
+    class PreviewUIView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            previewLayer.frame = bounds
+        }
     }
 }
