@@ -8,15 +8,26 @@ struct ProfileView: View {
     @State private var uploads: [FeedPhoto] = []
     @State private var isLoading = true
     @State private var selectedPhoto: FeedPhoto? = nil
+    @State private var selectedTab: ProfileTab = .snaps
 
     @State private var followerCount: Int = 0
     @State private var followingCount: Int = 0
     @State private var showFollowersList = false
     @State private var showFollowingList = false
 
+    enum ProfileTab { case snaps, styles }
+
     let columns = [GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3)]
 
     var user: SnapUser? { auth.currentUser }
+
+    // Style posts for this user — read from StyleFeedViewModel via UserDefaults
+    var myStylePosts: [StylePost] {
+        let key = "snapshe_style_posts_v2"
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let posts = try? JSONDecoder().decode([StylePost].self, from: data) else { return [] }
+        return posts.filter { $0.username == (user?.username ?? "") }
+    }
 
     var body: some View {
         NavigationStack {
@@ -24,7 +35,13 @@ struct ProfileView: View {
                 VStack(spacing: 0) {
                     ownProfileHeader(user: user)
                     Divider()
-                    uploadsGrid
+                    profileTabBar
+                    Divider()
+                    if selectedTab == .snaps {
+                        uploadsGrid
+                    } else {
+                        stylesGrid
+                    }
                 }
             }
             .refreshable { await loadUploads() }
@@ -64,6 +81,69 @@ struct ProfileView: View {
             }
         }
         .task { await loadUploads() }
+    }
+
+    var profileTabBar: some View {
+        HStack(spacing: 0) {
+            profileTabButton(icon: "square.grid.3x3.fill", label: "Snaps", tab: .snaps)
+            profileTabButton(icon: "tag.fill", label: "My Styles", tab: .styles)
+        }
+        .padding(.vertical, 4)
+    }
+
+    func profileTabButton(icon: String, label: String, tab: ProfileTab) -> some View {
+        Button { selectedTab = tab } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(selectedTab == tab ? Color.snapshePurple : Color(hex: "#BBB"))
+                Text(label)
+                    .font(.system(size: 11, weight: selectedTab == tab ? .bold : .regular))
+                    .foregroundStyle(selectedTab == tab ? Color.snapshePurple : Color(hex: "#BBB"))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                if selectedTab == tab {
+                    Rectangle()
+                        .fill(Color.snapshePurple)
+                        .frame(height: 2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    var stylesGrid: some View {
+        Group {
+            if myStylePosts.isEmpty {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 40)
+                    Image(systemName: "tshirt.fill")
+                        .font(.system(size: 44)).foregroundStyle(Color(hex: "#DDD"))
+                    Text("No style posts yet")
+                        .font(.system(size: 18, weight: .bold)).foregroundStyle(Color(hex: "#AAA"))
+                    Text("Share your first look from the Style tab!")
+                        .font(.system(size: 14)).foregroundStyle(Color(hex: "#CCC"))
+                        .multilineTextAlignment(.center).padding(.horizontal, 40)
+                    Spacer(minLength: 40)
+                }
+            } else {
+                LazyVStack(spacing: 16) {
+                    ForEach(myStylePosts) { post in
+                        StylePostCard(
+                            post: post,
+                            onBrandTap: { _ in },
+                            vm: StyleFeedViewModel(),
+                            currentUsername: user?.username ?? ""
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+        }
     }
 
     @ViewBuilder
@@ -198,7 +278,6 @@ struct ProfileView: View {
 }
 
 // MARK: - PublicProfileView
-
 struct PublicProfileView: View {
     @EnvironmentObject var auth: AuthManager
     @Environment(\.dismiss) var dismiss
@@ -210,6 +289,7 @@ struct PublicProfileView: View {
     @State private var isLoading = true
     @State private var error: String? = nil
     @State private var selectedPhoto: FeedPhoto? = nil
+    @State private var selectedTab: PublicProfileTab = .snaps
 
     @State private var isFollowing = false
     @State private var followerCount: Int = 0
@@ -218,7 +298,17 @@ struct PublicProfileView: View {
     @State private var showFollowersList = false
     @State private var showFollowingList = false
 
+    enum PublicProfileTab { case snaps, styles }
+
     let columns = [GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3), GridItem(.flexible(minimum: 0), spacing: 3)]
+
+    // Style posts for this user from local store
+    var userStylePosts: [StylePost] {
+        let key = "snapshe_style_posts_v2"
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let posts = try? JSONDecoder().decode([StylePost].self, from: data) else { return [] }
+        return posts.filter { $0.username == username }
+    }
 
     var body: some View {
         NavigationStack {
@@ -232,21 +322,57 @@ struct PublicProfileView: View {
                         publicProfileHeader(user: profileUser)
                         Divider()
 
-                        if uploads.isEmpty {
-                            VStack(spacing: 14) {
-                                Spacer(minLength: 32)
-                                Image(systemName: "photo.stack")
-                                    .font(.system(size: 44)).foregroundStyle(Color(hex: "#ddd"))
-                                Text("No uploads yet")
-                                    .font(.system(size: 18, weight: .bold)).foregroundStyle(Color(hex: "#aaa"))
-                                Spacer(minLength: 32)
+                        // Tab bar
+                        HStack(spacing: 0) {
+                            pubTabButton(icon: "square.grid.3x3.fill", label: "Snaps", tab: .snaps)
+                            pubTabButton(icon: "tag.fill", label: "Styles", tab: .styles)
+                        }
+                        .padding(.vertical, 4)
+                        Divider()
+
+                        if selectedTab == .snaps {
+                            if uploads.isEmpty {
+                                VStack(spacing: 14) {
+                                    Spacer(minLength: 32)
+                                    Image(systemName: "photo.stack")
+                                        .font(.system(size: 44)).foregroundStyle(Color(hex: "#ddd"))
+                                    Text("No uploads yet")
+                                        .font(.system(size: 18, weight: .bold)).foregroundStyle(Color(hex: "#aaa"))
+                                    Spacer(minLength: 32)
+                                }
+                            } else {
+                                LazyVGrid(columns: columns, spacing: 3) {
+                                    ForEach(uploads) { photo in
+                                        ProfilePhotoTile(photo: photo)
+                                            .onTapGesture { selectedPhoto = photo }
+                                    }
+                                }
                             }
                         } else {
-                            LazyVGrid(columns: columns, spacing: 3) {
-                                ForEach(uploads) { photo in
-                                    ProfilePhotoTile(photo: photo)
-                                        .onTapGesture { selectedPhoto = photo }
+                            // Styles tab
+                            if userStylePosts.isEmpty {
+                                VStack(spacing: 14) {
+                                    Spacer(minLength: 40)
+                                    Image(systemName: "tshirt.fill")
+                                        .font(.system(size: 44)).foregroundStyle(Color(hex: "#DDD"))
+                                    Text("No style posts yet")
+                                        .font(.system(size: 18, weight: .bold)).foregroundStyle(Color(hex: "#AAA"))
+                                    Spacer(minLength: 40)
                                 }
+                            } else {
+                                LazyVStack(spacing: 16) {
+                                    ForEach(userStylePosts) { post in
+                                        StylePostCard(
+                                            post: post,
+                                            onBrandTap: { _ in },
+                                            vm: StyleFeedViewModel(),
+                                            currentUsername: auth.currentUser?.username ?? ""
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.top, 12)
+                                .padding(.bottom, 32)
                             }
                         }
                     }
@@ -281,6 +407,27 @@ struct PublicProfileView: View {
             }
         }
         .task { await loadProfile() }
+    }
+
+    func pubTabButton(icon: String, label: String, tab: PublicProfileTab) -> some View {
+        Button { selectedTab = tab } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(selectedTab == tab ? Color.snapshePurple : Color(hex: "#BBB"))
+                Text(label)
+                    .font(.system(size: 11, weight: selectedTab == tab ? .bold : .regular))
+                    .foregroundStyle(selectedTab == tab ? Color.snapshePurple : Color(hex: "#BBB"))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                if selectedTab == tab {
+                    Rectangle().fill(Color.snapshePurple).frame(height: 2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
