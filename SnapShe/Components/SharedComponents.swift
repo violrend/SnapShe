@@ -29,7 +29,7 @@ let snapsheGradient = LinearGradient(
     startPoint: .topLeading, endPoint: .bottomTrailing
 )
 
-// MARK: - Brand Logo  (V icon + SnapShe text)
+// MARK: - Brand Logo  (S icon + SnapShe text)
 struct SnapSheBrandView: View {
     var size: CGFloat = 36
     var showText: Bool = true
@@ -38,7 +38,7 @@ struct SnapSheBrandView: View {
         HStack(spacing: 9) {
             ZStack {
                 snapsheGradient
-                Text("V")
+                Text("S")
                     .font(.system(size: size * 0.52, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
             }
@@ -49,8 +49,11 @@ struct SnapSheBrandView: View {
                 Text("SnapShe")
                     .font(.system(size: size * 0.58, weight: .black, design: .rounded))
                     .foregroundStyle(Color.snapsheBlack)
+                    .fixedSize()          // ← never wraps or truncates
+                    .lineLimit(1)
             }
         }
+        .fixedSize()                      // ← HStack takes exact width it needs
     }
 }
 
