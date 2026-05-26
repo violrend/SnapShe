@@ -2,6 +2,291 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
+// MARK: - Style Post Models
+
+struct BrandTag: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name: String
+    var category: String
+    // Normalized position on the photo (0.0 - 1.0)
+    var posX: CGFloat = 0.5
+    var posY: CGFloat = 0.5
+
+    static let popular = ["Nike", "Adidas", "Zara", "H&M", "Mango", "Bershka", "Pull&Bear",
+                          "Stradivarius", "Massimo Dutti", "Levis", "Gucci", "Prada",
+                          "Balenciaga", "New Balance", "Converse", "Vans", "Louis Vuitton"]
+}
+
+struct StylePost: Identifiable, Codable {
+    var id: UUID = UUID()
+    var imageFileName: String
+    var caption: String
+    var brandTags: [BrandTag]
+    var likes: Int = 0
+    var comments: [StyleComment] = []
+    var username: String
+    var userAvatar: String?
+    var createdAt: Date = Date()
+
+    var image: UIImage {
+        get { StyleImageStore.load(fileName: imageFileName) ?? UIImage(systemName: "photo")! }
+    }
+}
+
+struct StyleComment: Identifiable, Codable {
+    var id: UUID = UUID()
+    var username: String
+    var text: String
+    var createdAt: Date = Date()
+}
+
+// MARK: - StyleImageStore (disk persistence for UIImage)
+
+enum StyleImageStore {
+    static var imagesDir: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("StyleImages", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func save(image: UIImage) -> String {
+        let name = UUID().uuidString + ".jpg"
+        let url = imagesDir.appendingPathComponent(name)
+        if let data = image.jpegData(compressionQuality: 0.82) {
+            try? data.write(to: url)
+        }
+        return name
+    }
+
+    static func load(fileName: String) -> UIImage? {
+        // Demo posts use a sentinel value
+        if fileName == "__demo__" {
+            return UIImage(systemName: "person.crop.rectangle")
+        }
+        let url = imagesDir.appendingPathComponent(fileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return UIImage(data: data)
+    }
+
+    static func delete(fileName: String) {
+        let url = imagesDir.appendingPathComponent(fileName)
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+// MARK: - StyleLikeStore (per-user like state)
+
+enum StyleLikeStore {
+    static func likedPostIds(for username: String) -> Set<String> {
+        let key = "style_likes_\(username)"
+        let arr = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return Set(arr)
+    }
+
+    static func isLiked(postId: UUID, username: String) -> Bool {
+        likedPostIds(for: username).contains(postId.uuidString)
+    }
+
+    // Set explicit liked state (no toggle)
+    static func setLike(postId: UUID, username: String, liked: Bool) {
+        let key = "style_likes_\(username)"
+        var ids = likedPostIds(for: username)
+        if liked { ids.insert(postId.uuidString) }
+        else     { ids.remove(postId.uuidString) }
+        UserDefaults.standard.set(Array(ids), forKey: key)
+    }
+
+    // Toggle and return new state
+    @discardableResult
+    static func toggleLike(postId: UUID, username: String) -> Bool {
+        let nowLiked = !isLiked(postId: postId, username: username)
+        setLike(postId: postId, username: username, liked: nowLiked)
+        return nowLiked
+    }
+}
+
+@MainActor
+class StyleFeedViewModel: ObservableObject {
+    @Published var posts: [StylePost] = []
+    @Published var showNewPostSheet = false
+
+    private let saveKey = "snapshe_style_posts_v2"
+
+    init() {
+        loadFromDisk()
+    }
+
+    // MARK: - Persistence
+
+    func loadFromDisk() {
+        guard let data = UserDefaults.standard.data(forKey: saveKey),
+              let decoded = try? JSONDecoder().decode([StylePost].self, from: data) else {
+            return   // first launch — no saved posts yet
+        }
+        posts = decoded
+    }
+
+    func saveToDisk() {
+        guard let data = try? JSONEncoder().encode(posts) else { return }
+        UserDefaults.standard.set(data, forKey: saveKey)
+    }
+
+    // MARK: - Actions
+
+    func setLike(id: UUID, liked: Bool, fromUser: String, fromAvatar: String) {
+        guard let i = posts.firstIndex(where: { $0.id == id }) else { return }
+
+        // Sync count — card already updated UI, just persist
+        StyleLikeStore.setLike(postId: id, username: fromUser, liked: liked)
+        posts[i].likes = max(0, posts[i].likes + (liked ? 1 : -1))
+        saveToDisk()
+
+        // Notify only on like, not unlike
+        if liked {
+            let owner = posts[i].username
+            let pid   = posts[i].id.uuidString
+            if owner != fromUser {
+                Task { await StyleNotificationService.send(
+                    toUsername: owner,
+                    type: "style_like",
+                    fromUsername: fromUser,
+                    fromAvatar: fromAvatar,
+                    text: "liked your style post",
+                    postId: pid
+                )}
+            }
+        }
+    }
+
+    func addComment(postId: UUID, username: String, text: String, fromAvatar: String = "") {
+        guard let i = posts.firstIndex(where: { $0.id == postId }) else { return }
+        posts[i].comments.append(StyleComment(username: username, text: text))
+        saveToDisk()
+        // Send notification to post owner
+        let owner = posts[i].username
+        let pid   = posts[i].id.uuidString
+        if owner != username {
+            Task { await StyleNotificationService.send(
+                toUsername: owner,
+                type: "style_comment",
+                fromUsername: username,
+                fromAvatar: fromAvatar,
+                text: "commented: \(text)",
+                postId: pid
+            )}
+        }
+    }
+
+    func addPost(image: UIImage, caption: String, brandTags: [BrandTag], username: String, avatarURL: String = "") {
+        let fileName = StyleImageStore.save(image: image)
+        let post = StylePost(
+            imageFileName: fileName,
+            caption: caption,
+            brandTags: brandTags,
+            username: username,
+            userAvatar: avatarURL
+        )
+        posts.insert(post, at: 0)
+        saveToDisk()
+        Task { await syncPostToServer(post, image: image) }
+    }
+
+    func deletePost(id: UUID) {
+        if let i = posts.firstIndex(where: { $0.id == id }) {
+            let post = posts[i]
+            StyleImageStore.delete(fileName: post.imageFileName)
+            posts.remove(at: i)
+            saveToDisk()
+            // Delete from server too
+            Task { await deletePostFromServer(stylePostId: post.id.uuidString) }
+        }
+    }
+
+    // MARK: - Server sync
+
+    private func syncPostToServer(_ post: StylePost, image: UIImage) async {
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/style-post-sync.php"),
+              let imageData = image.jpegData(compressionQuality: 0.8) else { return }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+
+        let boundary = UUID().uuidString
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        func append(_ string: String) { body.append(string.data(using: .utf8)!) }
+
+        // Fields
+        for (key, val) in [
+            "post_id": post.id.uuidString,
+            "username": post.username,
+            "caption": post.caption,
+            "brand_tags": (try? String(data: JSONEncoder().encode(post.brandTags), encoding: .utf8)) ?? "[]",
+            "created_at": ISO8601DateFormatter().string(from: post.createdAt)
+        ] {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            append("\(val)\r\n")
+        }
+
+        // Image
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"image\"; filename=\"style.jpg\"\r\n")
+        append("Content-Type: image/jpeg\r\n\r\n")
+        body.append(imageData)
+        append("\r\n--\(boundary)--\r\n")
+
+        req.httpBody = body
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    private func deletePostFromServer(stylePostId: String) async {
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/style-post-delete.php") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = "post_id=\(stylePostId)".data(using: .utf8)
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    // No demo posts — real posts only
+    func seedDemoIfEmpty() {
+        // Nothing to seed — users see empty state until they share their first look
+    }
+}
+
+// MARK: - StyleNotificationService
+
+enum StyleNotificationService {
+    static func send(
+        toUsername: String,
+        type: String,
+        fromUsername: String,
+        fromAvatar: String,
+        text: String,
+        postId: String = ""
+    ) async {
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/style-notify.php") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body = [
+            "to_username":   toUsername,
+            "type":          type,
+            "from_username": fromUsername,
+            "from_avatar":   fromAvatar,
+            "text":          text,
+            "post_id":       postId
+        ]
+        .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
+        .joined(separator: "&")
+        req.httpBody = body.data(using: .utf8)
+        _ = try? await URLSession.shared.data(for: req)
+    }
+}
+
 struct HomeView: View {
     @EnvironmentObject var auth: AuthManager
     @StateObject private var vm = HomeViewModel()
@@ -33,11 +318,13 @@ struct HomeView: View {
     let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
     @StateObject private var followingVM = FollowingFeedViewModel()
+    @StateObject private var styleVM = StyleFeedViewModel()
     @State private var selectedFeedTab: FeedTab = .forYou
     @State private var showNotifications = false
     @State private var unreadCount: Int = 0
+    @State private var showNewStylePost = false  // kept for future use
 
-    enum FeedTab { case forYou, following }
+    enum FeedTab { case forYou, following, style }
 
     var body: some View {
         NavigationStack {
@@ -62,8 +349,10 @@ struct HomeView: View {
                         } else {
                             feedView
                         }
-                    } else {
+                    } else if selectedFeedTab == .following {
                         followingFeedView
+                    } else {
+                        StyleFeedView(vm: styleVM, currentUsername: auth.currentUser?.username ?? "me")
                     }
                 }
             }
@@ -72,6 +361,7 @@ struct HomeView: View {
             .sheet(isPresented: $showProfile) { ProfileView() }
         }
         .task { await vm.loadFeed(token: auth.token) }
+        .onAppear { styleVM.seedDemoIfEmpty() }
         .task(id: auth.token) {
             while !Task.isCancelled {
                 if let r = try? await APIService.shared.fetchNotifications(token: auth.token) {
@@ -81,7 +371,7 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showNotifications) {
-            NotificationsView(unreadCount: $unreadCount)
+            NotificationsView(unreadCount: $unreadCount, styleVM: styleVM)
                 .environmentObject(auth)
         }
         .onReceive(NotificationCenter.default.publisher(for: .feedNeedsRefresh)) { _ in
@@ -184,16 +474,37 @@ struct HomeView: View {
 
     var topBar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                SnapSheBrandView(size: 34)
-                Spacer()
+            HStack(spacing: 6) {
+                // Logo — only icon tappable, text is just a label
+                HStack(spacing: 9) {
+                    Button { showProfile = true } label: {
+                        ZStack {
+                            snapsheGradient
+                            Text("S")
+                                .font(.system(size: 34 * 0.52, weight: .black, design: .rounded))
+                                .foregroundStyle(.white)
+                        }
+                        .frame(width: 34, height: 34)
+                        .clipShape(RoundedRectangle(cornerRadius: 34 * 0.28, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("SnapShe")
+                        .font(.system(size: 34 * 0.58, weight: .black, design: .rounded))
+                        .foregroundStyle(Color.snapsheBlack)
+                        .fixedSize()
+                        .allowsHitTesting(false)   // ← not tappable
+                }
+                .fixedSize()
+
+                Spacer(minLength: 4)
 
                 Button { showProfile = true } label: {
                     SnapSheProfileChip(user: auth.currentUser)
                 }
                 .buttonStyle(.plain)
 
-                // Bell notification button
+                // Bell
                 Button { showNotifications = true } label: {
                     ZStack(alignment: .topTrailing) {
                         Image(systemName: unreadCount > 0 ? "bell.fill" : "bell")
@@ -219,6 +530,7 @@ struct HomeView: View {
                     .background(Color.snapsheGray)
                     .foregroundStyle(Color.snapsheBlack)
                     .clipShape(Capsule())
+                    .fixedSize()
 
                 Button("Logout") {
                     Task {
@@ -506,6 +818,7 @@ struct HomeView: View {
         HStack(spacing: 0) {
             feedTabButton(title: "For You", tab: .forYou)
             feedTabButton(title: "Following", tab: .following)
+            feedTabButton(title: "Style", tab: .style)
         }
         .padding(.horizontal, 18)
     }
@@ -516,6 +829,9 @@ struct HomeView: View {
                 selectedFeedTab = tab
                 if tab == .following && followingVM.photos.isEmpty && !followingVM.isLoading {
                     Task { await followingVM.loadFeed(token: auth.token) }
+                }
+                if tab == .style {
+                    styleVM.seedDemoIfEmpty()
                 }
             }
         } label: {
@@ -985,6 +1301,7 @@ struct NotificationsView: View {
     @EnvironmentObject var auth: AuthManager
     @Environment(\.dismiss) var dismiss
     @Binding var unreadCount: Int
+    var styleVM: StyleFeedViewModel   // to look up style posts by ID
 
     @State private var notifications: [AppNotification] = []
     @State private var isLoading = true
@@ -1017,7 +1334,7 @@ struct NotificationsView: View {
                 } else {
                     List {
                         ForEach(notifications) { notif in
-                            NotificationRow(notification: notif)
+                            NotificationRow(notification: notif, styleVM: styleVM)
                         }
                     }
                     .listStyle(.plain)
@@ -1057,50 +1374,75 @@ struct NotificationsView: View {
 struct NotificationRow: View {
     @EnvironmentObject var auth: AuthManager
     let notification: AppNotification
+    // StyleFeedViewModel passed so we can find the post by ID
+    var styleVM: StyleFeedViewModel? = nil
+
     @State private var showProfile = false
+    @State private var showStylePost: StylePost? = nil
 
     var body: some View {
-        Button { showProfile = true } label: {
+        Button { handleTap() } label: {
             HStack(spacing: 12) {
                 // Avatar
-                AsyncImage(url: avatarURL) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().scaledToFill()
-                    default:
-                        Color(hex: "#EEE").overlay(
-                            Image(systemName: "person.fill")
-                                .foregroundStyle(Color(hex: "#BBB"))
-                        )
+                ZStack(alignment: .bottomTrailing) {
+                    AsyncImage(url: avatarURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().scaledToFill()
+                        default:
+                            Color(hex: "#EEE").overlay(
+                                Image(systemName: "person.fill")
+                                    .foregroundStyle(Color(hex: "#BBB"))
+                            )
+                        }
                     }
-                }
-                .frame(width: 46, height: 46)
-                .clipShape(Circle())
+                    .frame(width: 46, height: 46)
+                    .clipShape(Circle())
 
-                // Text
-                VStack(alignment: .leading, spacing: 3) {
-                    Group {
-                        Text(notification.fromName).fontWeight(.bold)
-                        + Text(" started following you.")
-                    }
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.snapsheBlack)
-
-                    Text(timeAgo(notification.createdAt))
+                    // Type icon badge
+                    Text(icon)
                         .font(.system(size: 12))
-                        .foregroundStyle(Color(hex: "#999"))
+                        .frame(width: 20, height: 20)
+                        .background(iconBg)
+                        .clipShape(Circle())
+                        .offset(x: 4, y: 4)
                 }
 
-                Spacer()
+                // Text + post thumbnail
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        (Text(notification.fromUsername).fontWeight(.bold)
+                         + Text(" \(notifMessage)"))
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.snapsheBlack)
+                            .lineLimit(2)
 
-                // Unread indicator
-                if !notification.isRead {
-                    Circle()
-                        .fill(Color.snapshePurple)
-                        .frame(width: 8, height: 8)
+                        Text(timeAgo(notification.createdAt))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: "#999"))
+                    }
+
+                    Spacer()
+
+                    // Post thumbnail if it's a style notification
+                    if isStyleNotif, let post = linkedPost {
+                        Image(uiImage: post.image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 46, height: 46)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color(hex: "#E0E0E0"), lineWidth: 1)
+                            )
+                    } else if !notification.isRead {
+                        Circle()
+                            .fill(Color.snapshePurple)
+                            .frame(width: 8, height: 8)
+                    }
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1108,22 +1450,93 @@ struct NotificationRow: View {
             PublicProfileView(username: notification.fromUsername)
                 .environmentObject(auth)
         }
+        .sheet(item: $showStylePost) { post in
+            StylePostDetailView(
+                post: post,
+                currentUsername: auth.currentUser?.username ?? "",
+                onComment: { _ in }   // read-only from notification
+            )
+            .environmentObject(auth)
+        }
+    }
+
+    // MARK: - Helpers
+
+    var isStyleNotif: Bool {
+        notification.type == "style_like" || notification.type == "style_comment"
+    }
+
+    // Find the post in local storage by post_id
+    var linkedPost: StylePost? {
+        guard let pid = notification.postId, !pid.isEmpty,
+              let vm = styleVM,
+              let uuid = UUID(uuidString: pid) else { return nil }
+        return vm.posts.first { $0.id == uuid }
+    }
+
+    func handleTap() {
+        if isStyleNotif, let post = linkedPost {
+            showStylePost = post
+        } else {
+            showProfile = true
+        }
+    }
+
+    var notifMessage: String {
+        switch notification.type {
+        case "style_like":    return "liked your style post ❤️"
+        case "style_comment":
+            if let t = notification.text, t.hasPrefix("commented: ") {
+                let comment = String(t.dropFirst("commented: ".count))
+                return "commented on your style post: \"\(comment)\" 💬"
+            }
+            return "commented on your style post 💬"
+        case "follow":        return "started following you"
+        case "like":          return "liked your photo ❤️"
+        case "comment":       return "commented on your photo 💬"
+        default:              return notification.text ?? "interacted with your post"
+        }
+    }
+
+    var icon: String {
+        switch notification.type {
+        case "style_like", "like":       return "❤️"
+        case "style_comment", "comment": return "💬"
+        case "follow":                   return "👤"
+        default:                         return "🔔"
+        }
+    }
+
+    var iconBg: Color {
+        switch notification.type {
+        case "style_like", "like":       return Color.red.opacity(0.15)
+        case "style_comment", "comment": return Color.blue.opacity(0.12)
+        case "follow":                   return Color.snapshePurple.opacity(0.12)
+        default:                         return Color.gray.opacity(0.1)
+        }
     }
 
     var avatarURL: URL? {
         guard let av = notification.fromAvatar, !av.isEmpty else { return nil }
-        return URL(string: av)
+        if av.hasPrefix("http") { return URL(string: av) }
+        return URL(string: "\(APIService.baseURL)/\(av.hasPrefix("/") ? String(av.dropFirst()) : av)")
     }
 
     func timeAgo(_ dateStr: String) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        guard let date = fmt.date(from: dateStr) else { return "" }
-        let seconds = Int(-date.timeIntervalSinceNow)
-        if seconds < 60    { return "just now" }
-        if seconds < 3600  { return "\(seconds / 60)m ago" }
-        if seconds < 86400 { return "\(seconds / 3600)h ago" }
-        return "\(seconds / 86400)d ago"
+        let fmts = ["yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ss+00:00",
+                    "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"]
+        for fmt in fmts {
+            let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = fmt
+            if let date = df.date(from: dateStr) {
+                let s = Int(-date.timeIntervalSinceNow)
+                if s < 60    { return "just now" }
+                if s < 3600  { return "\(s / 60)m ago" }
+                if s < 86400 { return "\(s / 3600)h ago" }
+                return "\(s / 86400)d ago"
+            }
+        }
+        return ""
     }
 }
 
@@ -2253,3 +2666,2323 @@ struct LivePreviewView: UIViewRepresentable {
         }
     }
 }
+
+// ============================================================
+// MARK: - STYLE POSTS FEATURE
+// ============================================================
+
+// MARK: - StyleFeedView
+
+enum StyleSheet: Identifiable {
+    case newPost
+    case brandPage(String)
+    var id: String {
+        switch self {
+        case .newPost: return "newPost"
+        case .brandPage(let b): return "brand_\(b)"
+        }
+    }
+}
+
+struct StyleFeedView: View {
+    @EnvironmentObject var auth: AuthManager
+    @ObservedObject var vm: StyleFeedViewModel
+    let currentUsername: String
+
+    @State private var selectedBrandFilter: String? = nil
+    @State private var activeSheet: StyleSheet? = nil
+
+    var filteredPosts: [StylePost] {
+        guard let brand = selectedBrandFilter else { return vm.posts }
+        return vm.posts.filter { $0.brandTags.contains { $0.name == brand } }
+    }
+
+    var allBrands: [String] {
+        Array(Set(vm.posts.flatMap { $0.brandTags.map { $0.name } })).sorted()
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+
+                    // ── Community header (no button here) ────────
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "tag.fill")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(Color.snapshePurple)
+                            Text("Style Community")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.snapshePurple)
+                        }
+                        Text("Share your look, tag the brands")
+                            .font(.system(size: 22, weight: .black))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Text("Post your photo, tag the brands you're wearing.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#888"))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
+
+                    // ── Brand filter chips ────────────────────────
+                    if !allBrands.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                chipView(name: "All", selected: selectedBrandFilter == nil) {
+                                    selectedBrandFilter = nil
+                                }
+                                ForEach(allBrands, id: \.self) { brand in
+                                    chipView(name: brand, selected: selectedBrandFilter == brand) {
+                                        selectedBrandFilter = selectedBrandFilter == brand ? nil : brand
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 4)
+                        }
+                        .padding(.bottom, 8)
+                    }
+
+                    // ── Posts ─────────────────────────────────────
+                    if filteredPosts.isEmpty {
+                        VStack(spacing: 18) {
+                            Spacer(minLength: 40)
+                            Image(systemName: "tshirt.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(Color(hex: "#DDD"))
+                            Text("No style posts yet")
+                                .font(.system(size: 20, weight: .black))
+                                .foregroundStyle(Color.snapsheBlack)
+                            Text("Be the first to share your look!")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color(hex: "#999"))
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(40)
+                    } else {
+                        LazyVStack(spacing: 16) {
+                            ForEach(filteredPosts) { post in
+                                StylePostCard(
+                                    post: post,
+                                    onBrandTap: { brand in
+                                        activeSheet = .brandPage(brand)
+                                    },
+                                    vm: vm,
+                                    currentUsername: currentUsername
+                                )
+                                // Long-press to delete (owner only)
+                                .contextMenu {
+                                    if post.username == currentUsername {
+                                        Button(role: .destructive) {
+                                            vm.deletePost(id: post.id)
+                                        } label: {
+                                            Label("Delete Post", systemImage: "trash")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .padding(.bottom, 100) // space for FAB
+                    }
+                }
+            }
+
+            // ── Floating "Share Your Look" button (FAB) ───────
+            // Completely outside ScrollView and LazyVStack —
+            // no gesture conflict possible
+            Button {
+                activeSheet = .newPost
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("Share Your Look")
+                        .font(.system(size: 16, weight: .black))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(Color.snapshePurple)
+                .clipShape(Capsule())
+                .shadow(color: Color.snapshePurple.opacity(0.4), radius: 12, y: 4)
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 20)
+        }
+        .background(Color.white)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .newPost:
+                NewStylePostView { image, caption, tags, username in
+                    vm.addPost(
+                        image: image,
+                        caption: caption,
+                        brandTags: tags,
+                        username: username,
+                        avatarURL: auth.currentUser?.avatarURL?.absoluteString ?? auth.currentUser?.avatar ?? ""
+                    )
+                }
+                .environmentObject(auth)
+            case .brandPage(let brand):
+                BrandPageView(brandName: brand, posts: vm.posts)
+            }
+        }
+    }
+
+    func chipView(name: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(name)
+                .font(.system(size: 13, weight: selected ? .bold : .regular))
+                .foregroundStyle(selected ? .white : Color.snapsheBlack)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(selected ? Color.snapshePurple : Color.snapsheGray)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - AvatarCache (in-memory cache for username → avatar URL)
+
+final class AvatarCache {
+    static let shared = AvatarCache()
+    var cache: [String: URL] = [:]
+    private var inFlight: Set<String> = []
+
+    func url(for username: String) -> URL? { cache[username] }
+
+    func fetch(username: String, token: String) async -> URL? {
+        if let cached = cache[username] { return cached }
+        guard !inFlight.contains(username) else { return nil }
+        inFlight.insert(username)
+
+        defer { inFlight.remove(username) }
+
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/public-avatar.php?username=\(username)") else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let avatar = json["avatar"] as? String,
+              !avatar.isEmpty,
+              let avatarURL = URL(string: avatar) else { return nil }
+
+        cache[username] = avatarURL
+        return avatarURL
+    }
+}
+
+// MARK: - StylePostCard
+
+enum CardSheet: Identifiable {
+    case profile, detail, shopSimilar
+    var id: String {
+        switch self {
+        case .profile: return "profile"
+        case .detail: return "detail"
+        case .shopSimilar: return "shopSimilar"
+        }
+    }
+}
+
+struct StylePostCard: View {
+    let post: StylePost
+    let onBrandTap: (String) -> Void
+    let vm: StyleFeedViewModel
+    let currentUsername: String
+
+    @EnvironmentObject var auth: AuthManager
+    @State private var activeCard: CardSheet? = nil
+    @State private var showDeleteConfirm = false
+    @State private var likedByMe: Bool = false
+    @State private var likeCount: Int = 0
+    @State private var resolvedAvatarURL: URL? = nil   // fetched if post.userAvatar is empty
+
+    var isOwner: Bool {
+        post.username == currentUsername ||
+        post.username == (auth.currentUser?.username ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+
+            // ── User header ──────────────────────────────────
+            HStack(spacing: 10) {
+                Button { activeCard = .profile } label: {
+                    HStack(spacing: 10) {
+                        // Avatar
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [Color.snapshePurple, Color.snapshePink],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 38, height: 38)
+
+                            if let url = resolvedAvatarURL {
+                                AsyncImage(url: url) { phase in
+                                    switch phase {
+                                    case .success(let img):
+                                        img.resizable()
+                                            .scaledToFill()
+                                            .frame(width: 38, height: 38)
+                                            .clipShape(Circle())
+                                    default:
+                                        Text(String(post.username.prefix(1)).uppercased())
+                                            .font(.system(size: 15, weight: .black, design: .rounded))
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                            } else {
+                                Text(String(post.username.prefix(1)).uppercased())
+                                    .font(.system(size: 15, weight: .black, design: .rounded))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(post.username)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+                            Text(timeAgo(post.createdAt))
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color(hex: "#999"))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                // ── … menu ────────────────────────────────────
+                Menu {
+                    if isOwner {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("Delete Post", systemImage: "trash")
+                        }
+                    }
+                    Button { activeCard = .detail } label: {
+                        Label("View Comments", systemImage: "bubble.left")
+                    }
+                    Button { activeCard = .shopSimilar } label: {
+                        Label("Shop Similar", systemImage: "sparkles")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#CCC"))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            // ── Photo with pin dots — full image, no crop ────
+            ZStack(alignment: .topLeading) {
+                Image(uiImage: post.image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+
+                GeometryReader { geo in
+                    ForEach(post.brandTags) { tag in
+                        FeedBrandPinView(
+                            tag: tag,
+                            containerSize: geo.size,
+                            onTap: { onBrandTap(tag.name) }
+                        )
+                    }
+                }
+            }
+
+            // ── Caption ──────────────────────────────────────
+            if !post.caption.isEmpty {
+                Text(post.caption)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.snapsheBlack)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+            }
+
+            // ── Brand tag pills ──────────────────────────────
+            if !post.brandTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(post.brandTags) { tag in
+                            Button { onBrandTap(tag.name) } label: {
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(Color.snapshePurple)
+                                        .frame(width: 7, height: 7)
+                                    Text(tag.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                    if !tag.category.isEmpty {
+                                        Text("· \(tag.category)")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color(hex: "#999"))
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.snapshePurple.opacity(0.08))
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                }
+            }
+
+            // ── Actions row ──────────────────────────────────
+            HStack(spacing: 16) {
+                Button(action: {
+                    // 1. Toggle local UI immediately
+                    likedByMe.toggle()
+                    likeCount = max(0, likeCount + (likedByMe ? 1 : -1))
+                    // 2. Persist + notify
+                    vm.setLike(
+                        id: post.id,
+                        liked: likedByMe,
+                        fromUser: currentUsername,
+                        fromAvatar: auth.currentUser?.avatar ?? ""
+                    )
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: likedByMe ? "heart.fill" : "heart")
+                            .font(.system(size: 18))
+                            .foregroundStyle(likedByMe ? Color.red : Color.snapsheBlack)
+                        Text("\(likeCount)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button { activeCard = .detail } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "bubble.left")
+                            .font(.system(size: 17))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Text("\(post.comments.count)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button { activeCard = .shopSimilar } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Shop Similar")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Color.snapsheBlack)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            // ── Comment preview ──────────────────────────────
+            if let first = post.comments.first {
+                Divider().padding(.horizontal, 14)
+                Button { activeCard = .detail } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        (Text(first.username).fontWeight(.bold)
+                         + Text(" \(first.text)"))
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.snapsheBlack)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if post.comments.count > 1 {
+                            Text("See all \(post.comments.count) comments")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color(hex: "#999"))
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Color.snapsheBlack.opacity(0.07), radius: 12, y: 3)
+        .onAppear {
+            likedByMe = StyleLikeStore.isLiked(postId: post.id, username: currentUsername)
+            likeCount = post.likes
+            resolveAvatar()
+        }
+        .onChange(of: post.likes) { _, new in likeCount = new }
+        // ── Delete confirmation ───────────────────────────────
+        .confirmationDialog("Delete this post?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                vm.deletePost(id: post.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently remove your photo and brand tags.")
+        }
+        // ── ONE sheet modifier ────────────────────────────────
+        .sheet(item: $activeCard) { card in
+            switch card {
+            case .profile:
+                PublicProfileView(username: post.username)
+                    .environmentObject(auth)
+            case .detail:
+                StylePostDetailView(
+                    post: post,
+                    currentUsername: currentUsername,
+                    onComment: { text in
+                        vm.addComment(
+                            postId: post.id,
+                            username: currentUsername,
+                            text: text,
+                            fromAvatar: auth.currentUser?.avatar ?? ""
+                        )
+                    }
+                )
+                .environmentObject(auth)
+            case .shopSimilar:
+                ShopSimilarView(post: post)
+                    .environmentObject(auth)
+            }
+        }
+    }
+
+    func timeAgo(_ date: Date) -> String {
+        let s = Int(-date.timeIntervalSinceNow)
+        if s < 60 { return "just now" }
+        if s < 3600 { return "\(s/60)m ago" }
+        if s < 86400 { return "\(s/3600)h ago" }
+        return "\(s/86400)d ago"
+    }
+
+    func resolveAvatar() {
+        // 1. Post has saved avatar URL
+        if let saved = post.userAvatar, !saved.isEmpty {
+            let clean = saved.hasPrefix("/") ? String(saved.dropFirst()) : saved
+            resolvedAvatarURL = URL(string: saved.hasPrefix("http") ? saved : "\(APIService.baseURL)/\(clean)")
+            // Also store in cache
+            if let url = resolvedAvatarURL {
+                AvatarCache.shared.cache[post.username] = url
+            }
+            return
+        }
+
+        // 2. Current user — use their own known avatar
+        if post.username == (auth.currentUser?.username ?? "") {
+            resolvedAvatarURL = auth.currentUser?.avatarURL
+            return
+        }
+
+        // 3. Check cache first
+        if let cached = AvatarCache.shared.url(for: post.username) {
+            resolvedAvatarURL = cached
+            return
+        }
+
+        // 4. Fetch from public-avatar.php (no token needed)
+        Task {
+            let url = await AvatarCache.shared.fetch(username: post.username, token: auth.token)
+            await MainActor.run { resolvedAvatarURL = url }
+        }
+    }
+}
+
+// MARK: - StylePostDetailView (Yorum + Shop Similar)
+
+struct StylePostDetailView: View {
+    @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var auth: AuthManager
+    let post: StylePost
+    let currentUsername: String
+    let onComment: (String) -> Void
+
+    @State private var commentText = ""
+    @FocusState private var inputFocused: Bool
+    @State private var showShopSimilar = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Photo — full image, no crop
+                    Image(uiImage: post.image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+
+                    // Brand tags
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(post.brandTags) { tag in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "tag.fill")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(tag.name)
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundStyle(Color.snapsheBlack)
+                                        if !tag.category.isEmpty {
+                                            Text(tag.category)
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(Color(hex: "#999"))
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.snapsheGray)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    }
+
+                    // Caption
+                    if !post.caption.isEmpty {
+                        Text(post.caption)
+                            .font(.system(size: 15))
+                            .foregroundStyle(Color.snapsheBlack)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                    }
+
+                    // Shop Similar button
+                    Button {
+                        showShopSimilar = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 15, weight: .bold))
+                            Text("Shop Similar — Find similar products")
+                                .font(.system(size: 15, weight: .bold))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 14)
+                        .background(
+                            LinearGradient(
+                                colors: [Color.snapshePurple, Color.snapshePink],
+                                startPoint: .leading, endPoint: .trailing)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+
+                    Divider()
+
+                    // Comments section header
+                    HStack {
+                        Text("Comments")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Text("(\(post.comments.count))")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color(hex: "#999"))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    if post.comments.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color(hex: "#DDD"))
+                            Text("Be the first to comment!")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color(hex: "#BBB"))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 30)
+                    } else {
+                        ForEach(post.comments) { comment in
+                            HStack(alignment: .top, spacing: 10) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.snapsheGray)
+                                        .frame(width: 32, height: 32)
+                                    Text(String(comment.username.prefix(1)).uppercased())
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(Color(hex: "#888"))
+                                }
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(comment.username)
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    Text(comment.text)
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(timeAgo(comment.createdAt))
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Color(hex: "#BBB"))
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            Divider().padding(.horizontal, 16)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("@\(post.username)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                commentInputBar
+            }
+        }
+        .sheet(isPresented: $showShopSimilar) {
+            ShopSimilarView(post: post)
+                .environmentObject(auth)
+        }
+    }
+
+    var commentInputBar: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(
+                        colors: [Color.snapshePurple, Color.snapshePink],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 32, height: 32)
+                Text(String(currentUsername.prefix(1)).uppercased())
+                    .font(.system(size: 12, weight: .black))
+                    .foregroundStyle(.white)
+            }
+
+            TextField("Add a comment...", text: $commentText)
+                .font(.system(size: 15))
+                .focused($inputFocused)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.snapsheGray)
+                .clipShape(Capsule())
+
+            Button {
+                let text = commentText.trimmingCharacters(in: .whitespaces)
+                guard !text.isEmpty else { return }
+                onComment(text)
+                commentText = ""
+                inputFocused = false
+            } label: {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(commentText.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? Color(hex: "#DDD") : Color.snapshePurple)
+                    .clipShape(Circle())
+            }
+            .disabled(commentText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.white)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    func timeAgo(_ date: Date) -> String {
+        let s = Int(-date.timeIntervalSinceNow)
+        if s < 60 { return "just now" }
+        if s < 3600 { return "\(s/60)m ago" }
+        if s < 86400 { return "\(s/3600)h ago" }
+        return "\(s/86400)d ago"
+    }
+}
+
+// MARK: - FeedBrandPinView (read-only pin on feed card)
+
+struct FeedBrandPinView: View {
+    let tag: BrandTag
+    let containerSize: CGSize
+    let onTap: () -> Void
+
+    @State private var showLabel = true
+
+    var pinX: CGFloat { tag.posX * containerSize.width }
+    var pinY: CGFloat { tag.posY * containerSize.height }
+    var labelOnLeft: Bool { tag.posX > 0.6 }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // Animated pulsing ring
+            ZStack {
+                Circle()
+                    .fill(Color.snapshePurple.opacity(0.25))
+                    .frame(width: 28, height: 28)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 20, height: 20)
+                    .shadow(color: .black.opacity(0.2), radius: 3)
+                Circle()
+                    .fill(Color.snapshePurple)
+                    .frame(width: 11, height: 11)
+            }
+            .position(x: pinX, y: pinY)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.25)) { showLabel.toggle() }
+            }
+
+            // Label bubble — shown on tap
+            if showLabel {
+                Button(action: onTap) {
+                    HStack(spacing: 5) {
+                        Text(tag.name)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                        if !tag.category.isEmpty {
+                            Text(tag.category)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color(hex: "#555"))
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.snapshePurple)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.96))
+                            .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+                    )
+                }
+                .buttonStyle(.plain)
+                .position(
+                    x: labelOnLeft ? pinX - 60 : pinX + 60,
+                    y: pinY - 30
+                )
+                .transition(.scale(scale: 0.7).combined(with: .opacity))
+            }
+        }
+        .frame(width: containerSize.width, height: containerSize.height)
+        .allowsHitTesting(true)
+    }
+}
+
+// MARK: - BrandPostItem (used in BrandPageView)
+
+struct BrandPostItem: View {
+    @EnvironmentObject var auth: AuthManager
+    let post: StylePost
+    @State private var showProfile = false
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Image(uiImage: post.image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            // Tappable username chip → opens profile
+            Button { showProfile = true } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "person.circle.fill")
+                        .font(.system(size: 13))
+                    Text("@\(post.username)")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.snapsheBlack.opacity(0.72))
+                .clipShape(Capsule())
+                .padding(10)
+            }
+            .buttonStyle(.plain)
+        }
+        .sheet(isPresented: $showProfile) {
+            PublicProfileView(username: post.username)
+                .environmentObject(auth)
+        }
+    }
+}
+
+// MARK: - BrandPageView
+
+
+struct BrandPageView: View {
+    @Environment(\.dismiss) var dismiss
+    let brandName: String
+    let posts: [StylePost]
+
+    var brandPosts: [StylePost] {
+        posts.filter { $0.brandTags.contains { $0.name == brandName } }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // Brand header
+                    VStack(spacing: 10) {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [Color.snapshePurple.opacity(0.15), Color.snapshePink.opacity(0.15)],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 80, height: 80)
+                            Image(systemName: "tag.fill")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color.snapshePurple)
+                        }
+
+                        Text(brandName)
+                            .font(.system(size: 26, weight: .black))
+                            .foregroundStyle(Color.snapsheBlack)
+
+                        Text("\(brandPosts.count) user posts")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color(hex: "#888"))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 7)
+                            .background(Color.snapsheGray)
+                            .clipShape(Capsule())
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+
+                    if brandPosts.isEmpty {
+                        VStack(spacing: 14) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 36))
+                                .foregroundStyle(Color(hex: "#DDD"))
+                            Text("No one has tagged this brand yet")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color(hex: "#AAA"))
+                        }
+                        .padding(40)
+                    } else {
+                        // Single column — full images, no crop
+                        LazyVStack(spacing: 12) {
+                            ForEach(brandPosts) { post in
+                                BrandPostItem(post: post)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 24)
+                    }
+                }
+            }
+            .navigationTitle(brandName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - NewStylePostView (Yeni post oluşturma)
+
+// MARK: - StyleFilter
+
+struct StyleFilter: Identifiable, Equatable {
+    let id: String
+    let name: String
+    // CIFilter name + params
+    let filterName: String?
+    let params: [String: Any]
+
+    static func == (l: StyleFilter, r: StyleFilter) -> Bool { l.id == r.id }
+
+    static let all: [StyleFilter] = [
+        StyleFilter(id: "none",      name: "Original",  filterName: nil,                         params: [:]),
+        StyleFilter(id: "vivid",     name: "Vivid",     filterName: "CIVibrance",                params: ["inputAmount": 1.0 as NSNumber]),
+        StyleFilter(id: "fade",      name: "Fade",      filterName: "CIColorControls",           params: ["inputSaturation": 0.5 as NSNumber, "inputBrightness": 0.05 as NSNumber]),
+        StyleFilter(id: "warm",      name: "Warm",      filterName: "CITemperatureAndTint",      params: ["inputNeutral": CIVector(x: 4500, y: 0)]),
+        StyleFilter(id: "cool",      name: "Cool",      filterName: "CITemperatureAndTint",      params: ["inputNeutral": CIVector(x: 7500, y: 0)]),
+        StyleFilter(id: "mono",      name: "Mono",      filterName: "CIColorMonochrome",         params: ["inputColor": CIColor(red: 0.7, green: 0.7, blue: 0.7), "inputIntensity": 1.0 as NSNumber]),
+        StyleFilter(id: "noir",      name: "Noir",      filterName: "CIPhotoEffectNoir",         params: [:]),
+        StyleFilter(id: "chrome",    name: "Chrome",    filterName: "CIPhotoEffectChrome",       params: [:]),
+        StyleFilter(id: "fade2",     name: "Matte",     filterName: "CIPhotoEffectProcess",      params: [:]),
+        StyleFilter(id: "instant",   name: "Instant",   filterName: "CIPhotoEffectInstant",      params: [:]),
+        StyleFilter(id: "transfer",  name: "Transfer",  filterName: "CIPhotoEffectTransfer",     params: [:]),
+    ]
+
+    func apply(to image: UIImage) -> UIImage {
+        guard let filterName = filterName,
+              let ciImage = CIImage(image: image),
+              let filter = CIFilter(name: filterName) else { return image }
+        filter.setValue(ciImage, forKey: kCIInputImageKey)
+        for (k, v) in params { filter.setValue(v, forKey: k) }
+        guard let output = filter.outputImage else { return image }
+        let ctx = CIContext()
+        guard let cgImg = ctx.createCGImage(output, from: output.extent) else { return image }
+        return UIImage(cgImage: cgImg, scale: image.scale, orientation: image.imageOrientation)
+    }
+}
+
+// MARK: - NewStylePostView
+
+enum NewPostStep: Int, CaseIterable {
+    case source       // pick: camera or gallery
+    case filter       // apply filter
+    case tag          // pin brand tags
+    case caption      // write caption + share
+}
+
+struct NewStylePostView: View {
+    @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var auth: AuthManager
+    let onPost: (UIImage, String, [BrandTag], String) -> Void
+
+    // Step flow
+    @State private var step: NewPostStep = .source
+
+    // Image
+    @State private var rawImage: UIImage? = nil          // original from camera/gallery
+    @State private var filteredImage: UIImage? = nil     // after filter applied
+    @State private var pickerItem: PhotosPickerItem? = nil
+    @State private var showCamera = false
+    @State private var showPicker = false
+
+    // Filter
+    @State private var selectedFilter: StyleFilter = .all[0]
+
+    // Tags
+    @State private var brandTags: [BrandTag] = []
+    @State private var pendingTagPos: CGPoint? = nil
+    @State private var showBrandPin = false
+
+    // Caption
+    @State private var caption = ""
+    @FocusState private var captionFocused: Bool
+
+    var displayImage: UIImage? { filteredImage ?? rawImage }
+    var canShare: Bool { displayImage != nil && !brandTags.isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+
+                // ── Step indicator ──────────────────────────────
+                stepBar
+
+                // ── Content per step ────────────────────────────
+                switch step {
+                case .source:   sourceStep
+                case .filter:   filterStep
+                case .tag:      tagStep
+                case .caption:  captionStep
+                }
+            }
+            .background(Color.white)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if step == .source {
+                            dismiss()
+                        } else {
+                            step = NewPostStep(rawValue: step.rawValue - 1) ?? .source
+                        }
+                    } label: {
+                        Image(systemName: step == .source ? "xmark" : "chevron.left")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+                ToolbarItem(placement: .principal) {
+                    Text(stepTitle)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.snapsheBlack)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if step != .source && step != .caption {
+                        Button("Next") {
+                            step = NewPostStep(rawValue: step.rawValue + 1) ?? .caption
+                        }
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.snapshePurple)
+                        .disabled(displayImage == nil)
+                    }
+                }
+            }
+        }
+        // Camera — fullScreenCover stays open until we explicitly close it
+        .fullScreenCover(isPresented: $showCamera) {
+            StyleCameraView(
+                onCapture: { captured in
+                    rawImage = captured
+                    filteredImage = captured
+                    selectedFilter = .all[0]
+                    brandTags = []
+                    showCamera = false   // close camera, stay in NewStylePostView
+                    step = .filter
+                },
+                onCancel: {
+                    showCamera = false   // close camera, go back to source step
+                }
+            )
+        }
+        // Gallery picker sheet
+        .photosPicker(isPresented: $showPicker, selection: $pickerItem, matching: .images)
+        .onChange(of: pickerItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let img = UIImage(data: data) {
+                    rawImage = img
+                    filteredImage = img
+                    selectedFilter = .all[0]
+                    brandTags = []
+                    step = .filter
+                }
+                pickerItem = nil
+            }
+        }
+        // Brand pin sheet
+        .sheet(isPresented: $showBrandPin) {
+            BrandPinNameSheet { name, category in
+                guard let pos = pendingTagPos else { return }
+                brandTags.append(BrandTag(name: name, category: category, posX: pos.x, posY: pos.y))
+                pendingTagPos = nil
+            }
+        }
+    }
+
+    // MARK: - Step bar
+
+    var stepBar: some View {
+        HStack(spacing: 4) {
+            ForEach(NewPostStep.allCases, id: \.rawValue) { s in
+                Capsule()
+                    .fill(s.rawValue <= step.rawValue ? Color.snapshePurple : Color(hex: "#E0E0E0"))
+                    .frame(height: 3)
+                    .animation(.easeInOut(duration: 0.25), value: step)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    var stepTitle: String {
+        switch step {
+        case .source:  return "New Post"
+        case .filter:  return "Choose Filter"
+        case .tag:     return "Tag Brands"
+        case .caption: return "Share Your Look"
+        }
+    }
+
+    // MARK: - Step 1: Source
+
+    var sourceStep: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 20) {
+                // Camera button
+                Button { showCamera = true } label: {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.snapsheBlack)
+                                .frame(width: 56, height: 56)
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Take a Photo")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+                            Text("Use your camera")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color(hex: "#999"))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#CCC"))
+                    }
+                    .padding(18)
+                    .background(Color.snapsheGray)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                // Gallery button
+                Button { showPicker = true } label: {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.snapshePurple)
+                                .frame(width: 56, height: 56)
+                            Image(systemName: "photo.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Choose from Gallery")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+                            Text("Pick an existing photo")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color(hex: "#999"))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#CCC"))
+                    }
+                    .padding(18)
+                    .background(Color.snapsheGray)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            Spacer()
+        }
+    }
+
+    // MARK: - Step 2: Filter
+
+    var filterStep: some View {
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // Photo fills all space above the bottom controls
+                if let img = displayImage {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height - 160)
+                        .clipped()
+                        .animation(.easeInOut(duration: 0.2), value: selectedFilter.id)
+                }
+
+                // Filter strip
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(StyleFilter.all) { filter in
+                            FilterThumb(
+                                filter: filter,
+                                image: rawImage,
+                                isSelected: selectedFilter == filter
+                            ) {
+                                selectedFilter = filter
+                                if let raw = rawImage {
+                                    Task.detached(priority: .userInitiated) {
+                                        let result = filter.apply(to: raw)
+                                        await MainActor.run { filteredImage = result }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+                .frame(height: 100)
+
+                // Next button
+                Button { step = .tag } label: {
+                    Text("Next — Tag Brands")
+                        .font(.system(size: 16, weight: .black))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(Color.snapshePurple)
+                        .clipShape(Capsule())
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .frame(height: 60)
+            }
+        }
+    }
+
+    // MARK: - Step 3: Tag brands
+
+    var tagStep: some View {
+        VStack(spacing: 0) {
+            // Hint bar
+            HStack(spacing: 6) {
+                Image(systemName: "hand.tap.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.snapshePurple)
+                Text("Tap on the photo to pin a brand")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color(hex: "#555"))
+                Spacer()
+                if !brandTags.isEmpty {
+                    Text("\(brandTags.count) tagged")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.snapshePurple)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.snapshePurple.opacity(0.06))
+
+            // Photo + pins — full image, no crop
+            if let img = displayImage {
+                ZStack(alignment: .topLeading) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFit()          // ← shows full photo, no crop
+                        .frame(maxWidth: .infinity)
+                        .overlay(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { loc in
+                                        pendingTagPos = CGPoint(
+                                            x: max(0.05, min(0.95, loc.x / geo.size.width)),
+                                            y: max(0.05, min(0.95, loc.y / geo.size.height))
+                                        )
+                                        showBrandPin = true
+                                    }
+                            }
+                        )
+
+                    // Pin overlays
+                    GeometryReader { geo in
+                        ForEach(brandTags) { tag in
+                            BrandPinView(
+                                tag: tag,
+                                containerSize: geo.size,
+                                onDelete: { brandTags.removeAll { $0.id == tag.id } }
+                            )
+                        }
+                        // Purple border
+                        Rectangle()
+                            .stroke(Color.snapshePurple, lineWidth: 2)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+
+            // Tags list
+            if !brandTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(brandTags) { tag in
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.snapshePurple).frame(width: 7, height: 7)
+                                Text(tag.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color.snapsheBlack)
+                                Button {
+                                    brandTags.removeAll { $0.id == tag.id }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color(hex: "#999"))
+                                }
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Color.snapshePurple.opacity(0.08))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                step = .caption
+            } label: {
+                Text(brandTags.isEmpty ? "Skip — Add Caption" : "Next — Add Caption")
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(Color.snapshePurple)
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+    }
+
+    // MARK: - Step 4: Caption + Share
+
+    var captionStep: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 20) {
+                // Photo preview with pins — full image, no crop
+                if let img = displayImage {
+                    ZStack(alignment: .topLeading) {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                        GeometryReader { geo in
+                            ForEach(brandTags) { tag in
+                                BrandPinView(
+                                    tag: tag,
+                                    containerSize: geo.size,
+                                    onDelete: { brandTags.removeAll { $0.id == tag.id } }
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+
+                // Brand tags summary
+                if !brandTags.isEmpty {
+                    FlowLayout(spacing: 8) {
+                        ForEach(brandTags) { tag in
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.snapshePurple).frame(width: 7, height: 7)
+                                Text(tag.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color.snapshePurple)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Color.snapshePurple.opacity(0.08))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "tag")
+                            .foregroundStyle(Color(hex: "#BBB"))
+                        Text("No brands tagged")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#BBB"))
+                        Spacer()
+                        Button("Go back to tag") { step = .tag }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.snapshePurple)
+                    }
+                    .padding(.horizontal, 16)
+                }
+
+                // Caption field
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Caption")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#555"))
+                    TextField("Say something about your look... (optional)", text: $caption, axis: .vertical)
+                        .font(.system(size: 15))
+                        .lineLimit(3...6)
+                        .padding(14)
+                        .background(Color.snapsheGray)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .focused($captionFocused)
+                }
+                .padding(.horizontal, 16)
+
+                // Share button
+                Button {
+                    guard let img = displayImage else { return }
+                    onPost(img, caption, brandTags, auth.currentUser?.username ?? "me")
+                    dismiss()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 15, weight: .bold))
+                        Text("Share Your Look")
+                            .font(.system(size: 16, weight: .black))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(canShare ? Color.snapshePurple : Color(hex: "#CCC"))
+                    .clipShape(Capsule())
+                }
+                .disabled(!canShare)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 32)
+            }
+            .padding(.top, 16)
+        }
+    }
+}
+
+// MARK: - FilterThumb
+
+struct FilterThumb: View {
+    let filter: StyleFilter
+    let image: UIImage?
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var preview: UIImage? = nil
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 5) {
+                ZStack {
+                    if let prev = preview {
+                        Image(uiImage: prev)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 68, height: 68)
+                            .clipped()
+                    } else {
+                        Color.snapsheGray
+                            .frame(width: 68, height: 68)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isSelected ? Color.snapshePurple : Color.clear, lineWidth: 3)
+                )
+                .shadow(color: isSelected ? Color.snapshePurple.opacity(0.35) : .clear, radius: 6)
+
+                Text(filter.name)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .regular))
+                    .foregroundStyle(isSelected ? Color.snapshePurple : Color(hex: "#666"))
+            }
+        }
+        .buttonStyle(.plain)
+        .task {
+            guard let img = image else { return }
+            // Generate thumb async so UI doesn't block
+            preview = await Task.detached(priority: .userInitiated) {
+                let small = img.thumbnailSize(CGSize(width: 136, height: 136))
+                return filter.apply(to: small)
+            }.value
+        }
+    }
+}
+
+extension UIImage {
+    func thumbnailSize(_ size: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            self.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+}
+
+// MARK: - StyleCameraView
+
+struct StyleCameraView: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCapture: onCapture, onCancel: onCancel)
+    }
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onCapture: (UIImage) -> Void
+        let onCancel: () -> Void
+
+        init(onCapture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onCapture = onCapture
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            // DO NOT call picker.dismiss — SwiftUI manages the fullScreenCover lifecycle
+            if let img = info[.originalImage] as? UIImage {
+                onCapture(img)
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            // DO NOT call picker.dismiss — just notify SwiftUI
+            onCancel()
+        }
+    }
+}
+
+// MARK: - BrandPinView (pin on photo)
+
+struct BrandPinView: View {
+    let tag: BrandTag
+    let containerSize: CGSize
+    let onDelete: () -> Void
+
+    @State private var showLabel = true
+
+    var pinX: CGFloat { tag.posX * containerSize.width }
+    var pinY: CGFloat { tag.posY * containerSize.height }
+
+    // Flip label direction if too close to right edge
+    var labelOnLeft: Bool { tag.posX > 0.6 }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // Label
+            if showLabel {
+                HStack(spacing: 0) {
+                    if labelOnLeft {
+                        Spacer(minLength: 0)
+                        brandLabel
+                        // line to dot
+                        Rectangle()
+                            .fill(Color.white.opacity(0.9))
+                            .frame(width: 18, height: 1.5)
+                    } else {
+                        // line to dot
+                        Rectangle()
+                            .fill(Color.white.opacity(0.9))
+                            .frame(width: 18, height: 1.5)
+                        brandLabel
+                    }
+                }
+                .fixedSize()
+                .position(
+                    x: labelOnLeft ? pinX - 9 : pinX + 9,
+                    y: pinY - 22
+                )
+            }
+
+            // Dot + ring
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 22, height: 22)
+                    .shadow(color: .black.opacity(0.25), radius: 4)
+                Circle()
+                    .fill(Color.snapshePurple)
+                    .frame(width: 12, height: 12)
+            }
+            .position(x: pinX, y: pinY)
+            .onTapGesture { showLabel.toggle() }
+            .onLongPressGesture { onDelete() }
+        }
+        .frame(width: containerSize.width, height: containerSize.height)
+    }
+
+    var brandLabel: some View {
+        HStack(spacing: 5) {
+            Text(tag.name)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.snapsheBlack)
+            if !tag.category.isEmpty {
+                Text(tag.category)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(hex: "#555"))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.95))
+                .shadow(color: .black.opacity(0.18), radius: 4, y: 1)
+        )
+    }
+}
+
+// MARK: - BrandPinNameSheet (quick name entry after tap)
+
+struct BrandPinNameSheet: View {
+    @Environment(\.dismiss) var dismiss
+    let onConfirm: (String, String) -> Void
+
+    @State private var searchText = ""
+    @State private var selectedCategory = ""
+    @FocusState private var focused: Bool
+
+    let categories = ["Top", "Bottom", "Shoes", "Bag", "Accessory", "Outerwear", "Other"]
+
+    var filteredBrands: [String] {
+        if searchText.isEmpty { return BrandTag.popular }
+        return BrandTag.popular.filter { $0.lowercased().contains(searchText.lowercased()) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Search
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(Color(hex: "#888"))
+                    TextField("Search brand name...", text: $searchText)
+                        .autocorrectionDisabled()
+                        .autocapitalization(.words)
+                        .focused($focused)
+                        .submitLabel(.done)
+                        .onSubmit {
+                            guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                            onConfirm(searchText.trimmingCharacters(in: .whitespaces), selectedCategory)
+                            dismiss()
+                        }
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Color(hex: "#CCC"))
+                        }
+                    }
+                }
+                .padding(13)
+                .background(Color.snapsheGray)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(16)
+
+                // Category picker
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(categories, id: \.self) { cat in
+                            Button {
+                                selectedCategory = selectedCategory == cat ? "" : cat
+                            } label: {
+                                Text(cat)
+                                    .font(.system(size: 13, weight: selectedCategory == cat ? .bold : .regular))
+                                    .foregroundStyle(selectedCategory == cat ? .white : Color.snapsheBlack)
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(selectedCategory == cat ? Color.snapshePurple : Color.snapsheGray)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+
+                Divider()
+
+                List {
+                    // Custom entry
+                    if !searchText.isEmpty && !BrandTag.popular.contains(where: { $0.lowercased() == searchText.lowercased() }) {
+                        Button {
+                            onConfirm(searchText.trimmingCharacters(in: .whitespaces), selectedCategory)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.snapshePurple.opacity(0.12))
+                                        .frame(width: 36, height: 36)
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Pin \"\(searchText)\"")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    Text("Custom brand")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color(hex: "#999"))
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                    }
+
+                    ForEach(filteredBrands, id: \.self) { brand in
+                        Button {
+                            onConfirm(brand, selectedCategory)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.snapsheGray)
+                                        .frame(width: 38, height: 38)
+                                    Text(String(brand.prefix(1)))
+                                        .font(.system(size: 14, weight: .black))
+                                        .foregroundStyle(Color(hex: "#888"))
+                                }
+                                Text(brand)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Color.snapsheBlack)
+                                Spacer()
+                                // Pin dot indicator
+                                ZStack {
+                                    Circle().fill(Color.white).frame(width: 20, height: 20)
+                                        .shadow(radius: 2)
+                                    Circle().fill(Color.snapshePurple).frame(width: 10, height: 10)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                    }
+                }
+                .listStyle(.plain)
+            }
+            .navigationTitle("Pin a Brand")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+            }
+            .onAppear { focused = true }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - BrandSearchSheet
+
+struct BrandSearchSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var brandTags: [BrandTag]
+
+    @State private var searchText = ""
+    @State private var selectedCategory = ""
+    @State private var customBrandName = ""
+
+    let categories = ["Top", "Bottom", "Shoes", "Bag", "Accessory", "Outerwear", "Other"]
+
+    var filteredBrands: [String] {
+        if searchText.isEmpty { return BrandTag.popular }
+        return BrandTag.popular.filter { $0.lowercased().contains(searchText.lowercased()) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(Color(hex: "#888"))
+                    TextField("Search or type a brand...", text: $searchText)
+                        .autocorrectionDisabled()
+                        .autocapitalization(.words)
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Color(hex: "#CCC"))
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color.snapsheGray)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+
+                // Category chips
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(categories, id: \.self) { cat in
+                            Button {
+                                selectedCategory = selectedCategory == cat ? "" : cat
+                            } label: {
+                                Text(cat)
+                                    .font(.system(size: 13, weight: selectedCategory == cat ? .bold : .regular))
+                                    .foregroundStyle(selectedCategory == cat ? .white : Color.snapsheBlack)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 7)
+                                    .background(selectedCategory == cat ? Color.snapshePurple : Color.snapsheGray)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+
+                // Added tags preview
+                if !brandTags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(brandTags) { tag in
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                    Text(tag.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    Button {
+                                        brandTags.removeAll { $0.id == tag.id }
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(Color(hex: "#999"))
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.snapshePurple.opacity(0.1))
+                                .clipShape(Capsule())
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                    }
+                    Divider()
+                }
+
+                Divider()
+
+                List {
+                    // Custom brand entry
+                    if !searchText.isEmpty && !BrandTag.popular.contains(where: { $0.lowercased() == searchText.lowercased() }) {
+                        Button {
+                            addBrand(name: searchText)
+                        } label: {
+                            HStack(spacing: 10) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.snapshePurple.opacity(0.12))
+                                        .frame(width: 34, height: 34)
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Add \"\(searchText)\"")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    Text("Custom brand")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Color(hex: "#999"))
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                    }
+
+                    ForEach(filteredBrands, id: \.self) { brand in
+                        let isAdded = brandTags.contains { $0.name == brand }
+                        Button {
+                            if isAdded {
+                                brandTags.removeAll { $0.name == brand }
+                            } else {
+                                addBrand(name: brand)
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(isAdded ? Color.snapshePurple : Color.snapsheGray)
+                                        .frame(width: 38, height: 38)
+                                    Text(String(brand.prefix(1)))
+                                        .font(.system(size: 14, weight: .black))
+                                        .foregroundStyle(isAdded ? .white : Color(hex: "#888"))
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(brand)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    if isAdded, let tag = brandTags.first(where: { $0.name == brand }) {
+                                        Text(tag.category.isEmpty ? "Tagged" : tag.category)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color.snapshePurple)
+                                    }
+                                }
+                                Spacer()
+                                if isAdded {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(Color.snapshePurple)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                    }
+                }
+                .listStyle(.plain)
+            }
+            .navigationTitle("Tag Brands")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.snapshePurple)
+                }
+            }
+        }
+    }
+
+    func addBrand(name: String) {
+        guard !brandTags.contains(where: { $0.name == name }) else { return }
+        brandTags.append(BrandTag(name: name, category: selectedCategory))
+        searchText = ""
+    }
+}
+
+// MARK: - ShopSimilarView (Real API)
+
+struct ShopSimilarView: View {
+    @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var auth: AuthManager
+    let post: StylePost
+
+    @State private var isLoading = true
+    @State private var realProducts: [Product] = []
+    @State private var errorMessage: String? = nil
+    @State private var selectedBrand: BrandTag? = nil
+    @State private var productToSave: Product? = nil
+    @State private var showSaveModal = false
+
+    var filteredProducts: [Product] {
+        // No filter needed by brand since all results are from visual search of the post image
+        realProducts
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Brand filter chips (informational — shows which brands were tagged)
+                if !post.brandTags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(post.brandTags) { tag in
+                                HStack(spacing: 5) {
+                                    Image(systemName: "tag.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color.snapshePurple)
+                                    Text(tag.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Color.snapsheBlack)
+                                    if !tag.category.isEmpty {
+                                        Text("· \(tag.category)")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Color(hex: "#888"))
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Color.snapsheGray)
+                                .clipShape(Capsule())
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                    }
+                    Divider()
+                }
+
+                if isLoading {
+                    VStack {
+                        Spacer()
+                        VStack(spacing: 14) {
+                            ProgressView().tint(Color.snapshePurple).scaleEffect(1.2)
+                            Text("Finding similar products...")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color(hex: "#888"))
+                            Text("Searching by visual style")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color(hex: "#BBB"))
+                        }
+                        Spacer()
+                    }
+                } else if let err = errorMessage {
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 36))
+                            .foregroundStyle(Color(hex: "#DDD"))
+                        Text(err)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color(hex: "#AAA"))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                        Button("Try Again") {
+                            Task { await loadProducts() }
+                        }
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color.snapshePurple)
+                        Spacer()
+                    }
+                } else if realProducts.isEmpty {
+                    VStack(spacing: 16) {
+                        Spacer()
+                        Image(systemName: "sparkle.magnifyingglass")
+                            .font(.system(size: 40))
+                            .foregroundStyle(Color(hex: "#DDD"))
+                        Text("No similar products found")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color(hex: "#AAA"))
+                        Text("Try a different photo or check your connection.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(hex: "#BBB"))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                        Spacer()
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        LazyVGrid(
+                            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                            spacing: 16
+                        ) {
+                            ForEach(filteredProducts) { product in
+                                RealProductCard(product: product) {
+                                    productToSave = product
+                                    showSaveModal = true
+                                }
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
+            .navigationTitle("Shop Similar")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.snapsheBlack)
+                    }
+                }
+            }
+        }
+        .task { await loadProducts() }
+        .sheet(isPresented: $showSaveModal) {
+            if let product = productToSave {
+                SaveToCollectionView(product: product)
+            }
+        }
+    }
+
+    // MARK: - Load products via visual search API
+
+    func loadProducts() async {
+        isLoading = true
+        errorMessage = nil
+
+        guard let imageData = post.image.jpegData(compressionQuality: 0.8) else {
+            errorMessage = "Could not process image."
+            isLoading = false
+            return
+        }
+
+        // Build keyword from brand tags for better results
+        let keyword = post.brandTags.map { $0.name }.joined(separator: " ")
+
+        do {
+            let response = try await APIService.shared.visualSearch(
+                imageData: imageData,
+                imageURL: nil,
+                crop: nil,
+                keyword: keyword.isEmpty ? nil : keyword,
+                token: auth.token
+            )
+            if response.ok {
+                realProducts = response.products ?? []
+                if realProducts.isEmpty {
+                    errorMessage = nil // show empty state
+                }
+            } else {
+                errorMessage = response.error ?? "Search failed. Please try again."
+            }
+        } catch {
+            errorMessage = "Connection error. Please check your network."
+        }
+
+        isLoading = false
+    }
+}
+
+// MARK: - RealProductCard
+
+struct RealProductCard: View {
+    let product: Product
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topTrailing) {
+                AsyncImage(url: product.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                            .scaledToFill()
+                            .frame(height: 170)
+                            .clipped()
+                    case .failure:
+                        Color.snapsheGray
+                            .frame(height: 170)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundStyle(Color(hex: "#BBB"))
+                                    .font(.system(size: 28))
+                            )
+                    default:
+                        Color.snapsheGray
+                            .frame(height: 170)
+                            .shimmering()
+                    }
+                }
+                .frame(height: 170)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let url = APIService.affiliateURL(for: product.link) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+
+                if !product.price.isEmpty {
+                    Text(product.price)
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.snapsheBlack.opacity(0.85))
+                        .clipShape(Capsule())
+                        .padding(8)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(product.source)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.snapshePurple)
+                    .lineLimit(1)
+                Text(product.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.snapsheBlack)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 6) {
+                    Button {
+                        if let url = APIService.affiliateURL(for: product.link) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Text("View")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
+                            .background(Color.snapsheBlack)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+
+                    Button(action: onSave) {
+                        Image(systemName: "bookmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(width: 30, height: 30)
+                            .background(Color.snapsheGray)
+                            .foregroundStyle(Color.snapsheBlack)
+                            .clipShape(Circle())
+                    }
+                    .simultaneousGesture(TapGesture().onEnded { _ in })
+                }
+                .padding(.top, 4)
+            }
+            .padding(10)
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.snapsheBlack.opacity(0.07), radius: 8, y: 2)
+    }
+}
+
+// MARK: - FlowLayout (wrapping tag row)
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        var height: CGFloat = 0
+        var x: CGFloat = 0
+        var rowH: CGFloat = 0
+
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > width && x > 0 {
+                height += rowH + spacing
+                x = 0
+                rowH = 0
+            }
+            x += size.width + spacing
+            rowH = max(rowH, size.height)
+        }
+        height += rowH
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowH: CGFloat = 0
+
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX && x > bounds.minX {
+                y += rowH + spacing
+                x = bounds.minX
+                rowH = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowH = max(rowH, size.height)
+        }
+    }
+}
+
+// FollowingFeedViewModel is defined in HomeViewModel.swift
