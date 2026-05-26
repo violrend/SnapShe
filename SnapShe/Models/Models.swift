@@ -187,14 +187,17 @@ struct AppNotification: Codable, Identifiable {
     let fromAvatar: String?
     let createdAt: String
     var isRead: Bool
+    let text: String?
+    let postId: String?        // style post UUID — set for style_like / style_comment
 
     enum CodingKeys: String, CodingKey {
-        case id, type
+        case id, type, text
         case fromUsername = "from_username"
         case fromName     = "from_name"
         case fromAvatar   = "from_avatar"
         case createdAt    = "created_at"
         case isRead       = "is_read"
+        case postId       = "post_id"
     }
 }
 
