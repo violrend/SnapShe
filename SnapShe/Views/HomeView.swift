@@ -27,6 +27,7 @@ struct StylePost: Identifiable, Codable {
     var username: String
     var userAvatar: String?
     var createdAt: Date = Date()
+    var serverPostId: String? = nil  // tracks web-originated posts
 
     var image: UIImage {
         get { StyleImageStore.load(fileName: imageFileName) ?? UIImage(systemName: "photo")! }
@@ -115,6 +116,110 @@ class StyleFeedViewModel: ObservableObject {
 
     init() {
         loadFromDisk()
+        Task { await fetchFromServer() }
+        startPolling()
+    }
+
+    // MARK: - Polling (auto-refresh every 30s while app is open)
+
+    private var pollingTask: Task<Void, Never>?
+
+    func startPolling() {
+        pollingTask?.cancel()
+        pollingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000) // 30 seconds
+                if !Task.isCancelled {
+                    await fetchFromServer()
+                }
+            }
+        }
+    }
+
+    func stopPolling() {
+        pollingTask?.cancel()
+        pollingTask = nil
+    }
+
+    // MARK: - Server fetch (web + mobile posts merged)
+
+    func fetchFromServer() async {
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/style-posts-fetch.php") else { return }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
+
+        struct FetchResponse: Decodable {
+            let ok: Bool
+            let posts: [ServerStylePost]?
+        }
+        struct ServerStylePost: Decodable {
+            let post_id: String
+            let username: String
+            let caption: String
+            let brand_tags: [ServerBrandTag]
+            let image_url: String
+            let likes: Int
+            let created_at: String
+        }
+        struct ServerBrandTag: Decodable {
+            let name: String
+            let posX: Double?
+            let posY: Double?
+            let category: String?
+        }
+
+        guard let resp = try? JSONDecoder().decode(FetchResponse.self, from: data),
+              resp.ok, let serverPosts = resp.posts else { return }
+
+        // Build set of post_ids already stored locally
+        let localIDs = Set(posts.compactMap { $0.serverPostId })
+
+        var newPosts: [StylePost] = []
+        let fmt = ISO8601DateFormatter()
+
+        for sp in serverPosts {
+            // Skip if already in local feed
+            if localIDs.contains(sp.post_id) { continue }
+
+            let tags = sp.brand_tags.map { t in
+                BrandTag(
+                    name: t.name,
+                    category: t.category ?? "",
+                    posX: t.posX ?? 0.5,
+                    posY: t.posY ?? 0.5
+                )
+            }
+
+            // Download image
+            let fileName: String
+            if let imgUrl = URL(string: sp.image_url),
+               let (imgData, _) = try? await URLSession.shared.data(from: imgUrl),
+               let img = UIImage(data: imgData) {
+                fileName = StyleImageStore.save(image: img)
+            } else {
+                fileName = ""
+            }
+
+            var post = StylePost(
+                imageFileName: fileName,
+                caption: sp.caption,
+                brandTags: tags,
+                username: sp.username,
+                userAvatar: nil
+            )
+            post.serverPostId = sp.post_id
+            post.likes = sp.likes
+            post.createdAt = fmt.date(from: sp.created_at) ?? Date()
+            newPosts.append(post)
+        }
+
+        guard !newPosts.isEmpty else { return }
+
+        await MainActor.run {
+            // Merge: put server posts that aren't local at the end, sort by date
+            posts.append(contentsOf: newPosts)
+            posts.sort { $0.createdAt > $1.createdAt }
+            saveToDisk()
+        }
     }
 
     // MARK: - Persistence
@@ -361,7 +466,11 @@ struct HomeView: View {
             .sheet(isPresented: $showProfile) { ProfileView() }
         }
         .task { await vm.loadFeed(token: auth.token) }
-        .onAppear { styleVM.seedDemoIfEmpty() }
+        .onAppear {
+            styleVM.seedDemoIfEmpty()
+            styleVM.startPolling()
+        }
+        .onDisappear { styleVM.stopPolling() }
         .task(id: auth.token) {
             while !Task.isCancelled {
                 if let r = try? await APIService.shared.fetchNotifications(token: auth.token) {
@@ -832,6 +941,7 @@ struct HomeView: View {
                 }
                 if tab == .style {
                     styleVM.seedDemoIfEmpty()
+                    Task { await styleVM.fetchFromServer() }
                 }
             }
         } label: {
@@ -3509,35 +3619,67 @@ struct BrandPostItem: View {
     @EnvironmentObject var auth: AuthManager
     let post: StylePost
     @State private var showProfile = false
+    @State private var showShopSimilar = false
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Image(uiImage: post.image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        GeometryReader { geo in
+            ZStack(alignment: .bottomLeading) {
+                Image(uiImage: post.image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: geo.size.width)
 
-            // Tappable username chip → opens profile
-            Button { showProfile = true } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "person.circle.fill")
-                        .font(.system(size: 13))
-                    Text("@\(post.username)")
-                        .font(.system(size: 12, weight: .bold))
+                // Brand tag pins
+                ForEach(post.brandTags) { tag in
+                    BrandPinView(tag: tag, containerSize: geo.size, onDelete: {})
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.snapsheBlack.opacity(0.72))
-                .clipShape(Capsule())
+
+                // Bottom bar: username + shop button
+                HStack {
+                    Button { showProfile = true } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 13))
+                            Text("@\(post.username)")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.snapsheBlack.opacity(0.72))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button { showShopSimilar = true } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkle.magnifyingglass")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Shop Similar")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.snapshePurple.opacity(0.9))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
                 .padding(10)
             }
-            .buttonStyle(.plain)
+            .frame(width: geo.size.width,
+                   height: geo.size.width * post.image.size.height / max(post.image.size.width, 1))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .frame(height: (UIScreen.main.bounds.width - 32) * post.image.size.height / max(post.image.size.width, 1))
         .sheet(isPresented: $showProfile) {
-            PublicProfileView(username: post.username)
-                .environmentObject(auth)
+            PublicProfileView(username: post.username).environmentObject(auth)
+        }
+        .sheet(isPresented: $showShopSimilar) {
+            ShopSimilarView(post: post).environmentObject(auth)
         }
     }
 }
@@ -3560,22 +3702,39 @@ struct BrandPageView: View {
                 VStack(spacing: 0) {
                     // Brand header
                     VStack(spacing: 10) {
+                        // Brandfetch logo
+                        let domain = brandName.lowercased()
+                            .replacingOccurrences(of: " ", with: "")
+                            .replacingOccurrences(of: "&", with: "and") + ".com"
+                        let logoURL = URL(string: "https://cdn.brandfetch.io/domain/\(domain)/h/160/w/160/icon.png?c=1idTepj4w4y1xlCSbo_")
+
                         ZStack {
                             Circle()
                                 .fill(LinearGradient(
-                                    colors: [Color.snapshePurple.opacity(0.15), Color.snapshePink.opacity(0.15)],
+                                    colors: [Color.snapshePurple.opacity(0.12), Color.snapshePink.opacity(0.12)],
                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .frame(width: 80, height: 80)
-                            Image(systemName: "tag.fill")
-                                .font(.system(size: 32))
-                                .foregroundStyle(Color.snapshePurple)
+                                .frame(width: 88, height: 88)
+
+                            AsyncImage(url: logoURL) { phase in
+                                switch phase {
+                                case .success(let img):
+                                    img.resizable()
+                                        .scaledToFit()
+                                        .frame(width: 60, height: 60)
+                                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                                default:
+                                    Image(systemName: "tag.fill")
+                                        .font(.system(size: 32))
+                                        .foregroundStyle(Color.snapshePurple)
+                                }
+                            }
                         }
 
                         Text(brandName)
                             .font(.system(size: 26, weight: .black))
                             .foregroundStyle(Color.snapsheBlack)
 
-                        Text("\(brandPosts.count) user posts")
+                        Text("\(brandPosts.count) style post\(brandPosts.count != 1 ? "s" : "")")
                             .font(.system(size: 14))
                             .foregroundStyle(Color(hex: "#888"))
                             .padding(.horizontal, 16)
@@ -4676,106 +4835,174 @@ struct ShopSimilarView: View {
     @EnvironmentObject var auth: AuthManager
     let post: StylePost
 
-    @State private var isLoading = true
+    @State private var isLoading = false
     @State private var realProducts: [Product] = []
     @State private var errorMessage: String? = nil
-    @State private var selectedBrand: BrandTag? = nil
+    @State private var selectedTag: BrandTag? = nil
     @State private var productToSave: Product? = nil
     @State private var showSaveModal = false
 
-    var filteredProducts: [Product] {
-        // No filter needed by brand since all results are from visual search of the post image
-        realProducts
-    }
+    // Crop state
+    @State private var showCrop = false
+    @State private var cropRect = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+    @State private var pendingTag: BrandTag? = nil
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Brand filter chips (informational — shows which brands were tagged)
-                if !post.brandTags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(post.brandTags) { tag in
-                                HStack(spacing: 5) {
-                                    Image(systemName: "tag.fill")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(Color.snapshePurple)
-                                    Text(tag.name)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(Color.snapsheBlack)
-                                    if !tag.category.isEmpty {
-                                        Text("· \(tag.category)")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(Color(hex: "#888"))
-                                    }
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+
+                    // ── Photo with crop overlay ──────────────────────────
+                    GeometryReader { geo in
+                        ZStack {
+                            Image(uiImage: post.image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: geo.size.width)
+
+                            if showCrop {
+                                CropOverlayView(
+                                    cropRect: $cropRect,
+                                    imageSize: geo.size
+                                )
+                            }
+                        }
+                        .frame(width: geo.size.width,
+                               height: geo.size.width * (post.image.size.height / max(post.image.size.width, 1)))
+                        .clipped()
+                    }
+                    .frame(height: UIScreen.main.bounds.width * (post.image.size.height / max(post.image.size.width, 1)))
+                    .background(Color.black)
+
+                    // ── Crop toolbar (shown when crop active) ────────────
+                    if showCrop {
+                        HStack(spacing: 12) {
+                            Button("Cancel") {
+                                showCrop = false
+                                pendingTag = nil
+                            }
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color(hex: "#666"))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Color.snapsheGray)
+                            .clipShape(Capsule())
+
+                            Button {
+                                let tag = pendingTag
+                                showCrop = false
+                                Task { await loadProducts(for: tag, crop: cropRect) }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "sparkle.magnifyingglass")
+                                    Text("Search this area")
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Color.snapsheGray)
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 9)
+                                .background(Color.snapshePurple)
                                 .clipShape(Capsule())
                             }
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white)
+                        Divider()
                     }
-                    Divider()
-                }
 
-                if isLoading {
-                    VStack {
-                        Spacer()
+                    // ── Brand tag chips ──────────────────────────────────
+                    if !post.brandTags.isEmpty && !showCrop {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(post.brandTags) { tag in
+                                    Button {
+                                        // Open crop UI centred on this tag's pin position
+                                        pendingTag = tag
+                                        cropRect = CGRect(
+                                            x: max(0, tag.posX - 0.25),
+                                            y: max(0, tag.posY - 0.25),
+                                            width: 0.5,
+                                            height: 0.5
+                                        )
+                                        showCrop = true
+                                    } label: {
+                                        HStack(spacing: 5) {
+                                            Image(systemName: "tag.fill")
+                                                .font(.system(size: 10, weight: .bold))
+                                            Text(tag.name)
+                                                .font(.system(size: 13, weight: .semibold))
+                                            if !tag.category.isEmpty {
+                                                Text("· \(tag.category)")
+                                                    .font(.system(size: 12))
+                                                    .opacity(0.7)
+                                            }
+                                            Image(systemName: "crop")
+                                                .font(.system(size: 10))
+                                                .opacity(0.6)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(selectedTag?.id == tag.id ? Color.snapshePurple : Color.snapsheGray)
+                                        .foregroundStyle(selectedTag?.id == tag.id ? Color.white : Color.snapsheBlack)
+                                        .clipShape(Capsule())
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                        }
+                        Divider()
+                    }
+
+                    // ── Results ──────────────────────────────────────────
+                    if isLoading {
                         VStack(spacing: 14) {
                             ProgressView().tint(Color.snapshePurple).scaleEffect(1.2)
                             Text("Finding similar products...")
                                 .font(.system(size: 14))
                                 .foregroundStyle(Color(hex: "#888"))
-                            Text("Searching by visual style")
-                                .font(.system(size: 12))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+
+                    } else if let err = errorMessage {
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color(hex: "#DDD"))
+                            Text(err)
+                                .font(.system(size: 14))
+                                .foregroundStyle(Color(hex: "#AAA"))
+                                .multilineTextAlignment(.center)
+                            Button("Try Again") { Task { await loadProducts(for: selectedTag) } }
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Color.snapshePurple)
+                        }
+                        .padding(40)
+
+                    } else if realProducts.isEmpty && !showCrop {
+                        VStack(spacing: 12) {
+                            Image(systemName: "sparkle.magnifyingglass")
+                                .font(.system(size: 40))
+                                .foregroundStyle(Color(hex: "#DDD"))
+                            Text("Tap a brand tag to crop & search")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color(hex: "#AAA"))
+                            Text("Select the exact area you want to search")
+                                .font(.system(size: 13))
                                 .foregroundStyle(Color(hex: "#BBB"))
+                                .multilineTextAlignment(.center)
                         }
-                        Spacer()
-                    }
-                } else if let err = errorMessage {
-                    VStack(spacing: 16) {
-                        Spacer()
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 36))
-                            .foregroundStyle(Color(hex: "#DDD"))
-                        Text(err)
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color(hex: "#AAA"))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        Button("Try Again") {
-                            Task { await loadProducts() }
-                        }
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.snapshePurple)
-                        Spacer()
-                    }
-                } else if realProducts.isEmpty {
-                    VStack(spacing: 16) {
-                        Spacer()
-                        Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 40))
-                            .foregroundStyle(Color(hex: "#DDD"))
-                        Text("No similar products found")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(Color(hex: "#AAA"))
-                        Text("Try a different photo or check your connection.")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color(hex: "#BBB"))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        Spacer()
-                    }
-                } else {
-                    ScrollView(showsIndicators: false) {
+                        .padding(40)
+
+                    } else if !realProducts.isEmpty {
                         LazyVGrid(
                             columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                             spacing: 16
                         ) {
-                            ForEach(filteredProducts) { product in
+                            ForEach(realProducts) { product in
                                 RealProductCard(product: product) {
                                     productToSave = product
                                     showSaveModal = true
@@ -4798,7 +5025,6 @@ struct ShopSimilarView: View {
                 }
             }
         }
-        .task { await loadProducts() }
         .sheet(isPresented: $showSaveModal) {
             if let product = productToSave {
                 SaveToCollectionView(product: product)
@@ -4808,9 +5034,11 @@ struct ShopSimilarView: View {
 
     // MARK: - Load products via visual search API
 
-    func loadProducts() async {
+    func loadProducts(for tag: BrandTag? = nil, crop: CGRect? = nil) async {
+        selectedTag = tag
         isLoading = true
         errorMessage = nil
+        realProducts = []
 
         guard let imageData = post.image.jpegData(compressionQuality: 0.8) else {
             errorMessage = "Could not process image."
@@ -4818,22 +5046,37 @@ struct ShopSimilarView: View {
             return
         }
 
-        // Build keyword from brand tags for better results
-        let keyword = post.brandTags.map { $0.name }.joined(separator: " ")
+        // Build crop string
+        let cropStr: String?
+        if let c = crop {
+            let left   = max(0.0, c.minX)
+            let top    = max(0.0, c.minY)
+            let right  = min(1.0, c.maxX)
+            let bottom = min(1.0, c.maxY)
+            cropStr = String(format: "%.4f;%.4f;%.4f;%.4f", left, top, right, bottom)
+        } else if let t = tag {
+            let cx = t.posX, cy = t.posY
+            let left   = max(0.0, cx - 0.25)
+            let top    = max(0.0, cy - 0.25)
+            let right  = min(1.0, cx + 0.25)
+            let bottom = min(1.0, cy + 0.25)
+            cropStr = String(format: "%.4f;%.4f;%.4f;%.4f", left, top, right, bottom)
+        } else {
+            cropStr = nil
+        }
+
+        let keyword = tag?.name ?? post.brandTags.map { $0.name }.joined(separator: " ")
 
         do {
             let response = try await APIService.shared.visualSearch(
                 imageData: imageData,
                 imageURL: nil,
-                crop: nil,
+                crop: cropStr,
                 keyword: keyword.isEmpty ? nil : keyword,
                 token: auth.token
             )
             if response.ok {
                 realProducts = response.products ?? []
-                if realProducts.isEmpty {
-                    errorMessage = nil // show empty state
-                }
             } else {
                 errorMessage = response.error ?? "Search failed. Please try again."
             }
@@ -4842,6 +5085,130 @@ struct ShopSimilarView: View {
         }
 
         isLoading = false
+    }
+}
+
+
+// MARK: - CropOverlayView
+
+struct CropOverlayView: View {
+    @Binding var cropRect: CGRect
+    let imageSize: CGSize
+
+    @State private var dragStart: CGRect = .zero
+    @State private var activeHandle: String = ""
+
+    let minSize: CGFloat = 0.1
+
+    var body: some View {
+        ZStack {
+            // Dim outside crop
+            Color.black.opacity(0.45)
+                .mask(
+                    Rectangle()
+                        .overlay(
+                            Rectangle()
+                                .frame(
+                                    width: cropRect.width * imageSize.width,
+                                    height: cropRect.height * imageSize.height
+                                )
+                                .offset(
+                                    x: (cropRect.midX - 0.5) * imageSize.width,
+                                    y: (cropRect.midY - 0.5) * imageSize.height
+                                )
+                                .blendMode(.destinationOut)
+                        )
+                )
+                .allowsHitTesting(false)
+
+            // Crop box border
+            Rectangle()
+                .stroke(Color.white, lineWidth: 2)
+                .frame(
+                    width: cropRect.width * imageSize.width,
+                    height: cropRect.height * imageSize.height
+                )
+                .offset(
+                    x: (cropRect.midX - 0.5) * imageSize.width,
+                    y: (cropRect.midY - 0.5) * imageSize.height
+                )
+                .gesture(
+                    DragGesture()
+                        .onChanged { v in
+                            if activeHandle == "" || activeHandle == "move" {
+                                activeHandle = "move"
+                                if v.translation == .zero { dragStart = cropRect }
+                                let dx = v.translation.width  / imageSize.width
+                                let dy = v.translation.height / imageSize.height
+                                let nx = max(0, min(1 - dragStart.width,  dragStart.minX + dx))
+                                let ny = max(0, min(1 - dragStart.height, dragStart.minY + dy))
+                                cropRect = CGRect(x: nx, y: ny, width: dragStart.width, height: dragStart.height)
+                            }
+                        }
+                        .onEnded { _ in activeHandle = "" }
+                )
+
+            // Corner handles
+            ForEach(["tl","tr","bl","br"], id: \.self) { h in
+                cropHandle(h)
+            }
+        }
+    }
+
+    func handlePos(_ h: String) -> CGPoint {
+        let bx = cropRect.minX * imageSize.width
+        let by = cropRect.minY * imageSize.height
+        let bw = cropRect.width  * imageSize.width
+        let bh = cropRect.height * imageSize.height
+        switch h {
+        case "tl": return CGPoint(x: bx,      y: by)
+        case "tr": return CGPoint(x: bx + bw, y: by)
+        case "bl": return CGPoint(x: bx,      y: by + bh)
+        default:   return CGPoint(x: bx + bw, y: by + bh)
+        }
+    }
+
+    func cropHandle(_ h: String) -> some View {
+        let pos = handlePos(h)
+        return Rectangle()
+            .fill(Color.white)
+            .frame(width: 20, height: 20)
+            .cornerRadius(4)
+            .shadow(radius: 2)
+            .position(x: pos.x + imageSize.width * 0.0,
+                      y: pos.y + imageSize.height * 0.0)
+            .offset(x: -imageSize.width/2, y: -imageSize.height/2)
+            .gesture(
+                DragGesture()
+                    .onChanged { v in
+                        if activeHandle == "" || activeHandle == h { activeHandle = h }
+                        if v.translation == .zero { dragStart = cropRect }
+                        let dx = v.translation.width  / imageSize.width
+                        let dy = v.translation.height / imageSize.height
+                        var r = dragStart
+                        switch h {
+                        case "tl":
+                            let nx = min(r.maxX - minSize, r.minX + dx)
+                            let ny = min(r.maxY - minSize, r.minY + dy)
+                            r = CGRect(x: max(0,nx), y: max(0,ny),
+                                       width: r.maxX - max(0,nx), height: r.maxY - max(0,ny))
+                        case "tr":
+                            let ny = min(r.maxY - minSize, r.minY + dy)
+                            let nw = max(minSize, min(1 - r.minX, r.width + dx))
+                            r = CGRect(x: r.minX, y: max(0,ny), width: nw, height: r.maxY - max(0,ny))
+                        case "bl":
+                            let nx = min(r.maxX - minSize, r.minX + dx)
+                            let nh = max(minSize, min(1 - r.minY, r.height + dy))
+                            r = CGRect(x: max(0,nx), y: r.minY, width: r.maxX - max(0,nx), height: nh)
+                        default: // br
+                            let nw = max(minSize, min(1 - r.minX, r.width + dx))
+                            let nh = max(minSize, min(1 - r.minY, r.height + dy))
+                            r = CGRect(x: r.minX, y: r.minY, width: nw, height: nh)
+                        }
+                        cropRect = r
+                    }
+                    .onEnded { _ in activeHandle = "" }
+            )
     }
 }
 
