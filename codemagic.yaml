@@ -16,8 +16,8 @@ workflows:
         APP_STORE_APPLE_ID: "6760227147"
         DEVELOPMENT_TEAM: "M3RM3YA99H"
 
-        # Yeni sürüm
-        APP_VERSION: "1.0.10"
+        # Yeni üst sürüm
+        APP_VERSION: "1.0.11"
 
       ios_signing:
         distribution_type: app_store
@@ -41,8 +41,8 @@ workflows:
         script: |
           cd $CM_BUILD_DIR
 
-          # Build numarası
-          BUILD_NUMBER="${CM_BUILD_NUMBER:-34}"
+          # Build numarası önceki 34'ten büyük olmalı
+          BUILD_NUMBER="${CM_BUILD_NUMBER:-35}"
 
           echo "Setting CFBundleShortVersionString=$APP_VERSION"
           echo "Setting CFBundleVersion=$BUILD_NUMBER"
@@ -55,7 +55,6 @@ workflows:
 
           echo "Final Info.plist values:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" SnapShe/Info.plist
-
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" SnapShe/Info.plist
 
       - name: Install signing certificates
