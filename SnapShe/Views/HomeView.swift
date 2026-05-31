@@ -170,15 +170,17 @@ class StyleFeedViewModel: ObservableObject {
         guard let resp = try? JSONDecoder().decode(FetchResponse.self, from: data),
               resp.ok, let serverPosts = resp.posts else { return }
 
-        // Build set of post_ids already stored locally
-        let localIDs = Set(posts.compactMap { $0.serverPostId })
+        // Build sets for duplicate detection
+        let localServerIDs = Set(posts.compactMap { $0.serverPostId })
+        let localUUIDs     = Set(posts.map { $0.id.uuidString })
 
         var newPosts: [StylePost] = []
         let fmt = ISO8601DateFormatter()
 
         for sp in serverPosts {
-            // Skip if already in local feed
-            if localIDs.contains(sp.post_id) { continue }
+            // Skip if already in local feed (by serverPostId OR by UUID)
+            if localServerIDs.contains(sp.post_id) { continue }
+            if localUUIDs.contains(sp.post_id)     { continue }
 
             let tags = sp.brand_tags.map { t in
                 BrandTag(
@@ -323,7 +325,6 @@ class StyleFeedViewModel: ObservableObject {
         var body = Data()
         func append(_ string: String) { body.append(string.data(using: .utf8)!) }
 
-        // Fields
         for (key, val) in [
             "post_id": post.id.uuidString,
             "username": post.username,
@@ -336,7 +337,6 @@ class StyleFeedViewModel: ObservableObject {
             append("\(val)\r\n")
         }
 
-        // Image
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"image\"; filename=\"style.jpg\"\r\n")
         append("Content-Type: image/jpeg\r\n\r\n")
@@ -345,6 +345,14 @@ class StyleFeedViewModel: ObservableObject {
 
         req.httpBody = body
         _ = try? await URLSession.shared.data(for: req)
+
+        // Mark serverPostId so fetchFromServer won't re-add it
+        await MainActor.run {
+            if let i = posts.firstIndex(where: { $0.id == post.id }) {
+                posts[i].serverPostId = post.id.uuidString
+                saveToDisk()
+            }
+        }
     }
 
     private func deletePostFromServer(stylePostId: String) async {
@@ -409,8 +417,10 @@ struct HomeView: View {
     @State private var showProfile = false
     @State private var searchText = ""
     @State private var searchResults: [SnapUser] = []
+    @State private var brandResults: [BrandSearchResult] = []
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>? = nil
+    @State private var brandPageSheet: String? = nil
 
     @State private var videoForSearch: URL? = nil
     @State private var showVideoSearch = false
@@ -658,13 +668,14 @@ struct HomeView: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-            HStack(spacing: 10) {
+            VStack(spacing: 8) {
+                // ── Search bar (full width) ─────────────────────
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(Color(hex: "#888"))
 
-                    TextField("Search users...", text: $searchText)
-                        .font(.system(size: 16))
+                    TextField("Search users or brands...", text: $searchText)
+                        .font(.system(size: 15))
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .onChange(of: searchText) { _, q in
@@ -672,11 +683,12 @@ struct HomeView: View {
 
                             if q.isEmpty {
                                 searchResults = []
+                                brandResults = []
                                 return
                             }
 
                             searchTask = Task {
-                                try? await Task.sleep(nanoseconds: 400_000_000)
+                                try? await Task.sleep(nanoseconds: 350_000_000)
                                 guard !Task.isCancelled else { return }
                                 await performSearch(q)
                             }
@@ -686,6 +698,7 @@ struct HomeView: View {
                         Button {
                             searchText = ""
                             searchResults = []
+                            brandResults = []
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(Color(hex: "#ccc"))
@@ -697,63 +710,50 @@ struct HomeView: View {
                 .background(Color.snapsheGray)
                 .clipShape(Capsule())
 
-                Button { showSourcePicker = true } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.snapsheBlack)
-                            .frame(width: 40, height: 40)
-
-                        Image(systemName: "viewfinder.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.white)
-                    }
-                }
-
-                Button { showVideoPicker = true } label: {
-                    ZStack {
-                        Circle()
-                            .fill(Color.snapshePurple)
-                            .frame(width: 40, height: 40)
-
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white)
-                    }
-                }
-
-                Button { showInstagramFetch = true } label: {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color(hex: "#d62976"), Color(hex: "#962fbf")],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 40, height: 40)
-
-                        Image(systemName: "camera")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white)
-                    }
-                }
-
-                // ── LIVE butonu ──────────────────────────────────
-                Button { showLiveCamera = true } label: {
-                    ZStack {
-                        Capsule()
-                            .fill(Color(hex: "#FF3B30"))
-                            .frame(width: 56, height: 40)
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 7, height: 7)
-                            Text("LIVE")
-                                .font(.system(size: 11, weight: .black))
-                                .foregroundStyle(.white)
+                // ── Action buttons (2 rows, no overflow) ────────
+                HStack(spacing: 8) {
+                    // Photo
+                    Button { showSourcePicker = true } label: {
+                        ZStack {
+                            Circle().fill(Color.snapsheBlack).frame(width: 40, height: 40)
+                            Image(systemName: "viewfinder.circle.fill")
+                                .font(.system(size: 22)).foregroundStyle(.white)
                         }
                     }
+                    // Video
+                    Button { showVideoPicker = true } label: {
+                        ZStack {
+                            Circle().fill(Color.snapshePurple).frame(width: 40, height: 40)
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 16)).foregroundStyle(.white)
+                        }
+                    }
+                    // Instagram
+                    Button { showInstagramFetch = true } label: {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(
+                                    colors: [Color(hex: "#d62976"), Color(hex: "#962fbf")],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 40, height: 40)
+                            Image(systemName: "camera")
+                                .font(.system(size: 16)).foregroundStyle(.white)
+                        }
+                    }
+                    // LIVE
+                    Button { showLiveCamera = true } label: {
+                        ZStack {
+                            Capsule().fill(Color(hex: "#FF3B30")).frame(width: 56, height: 40)
+                            HStack(spacing: 4) {
+                                Circle().fill(.white).frame(width: 7, height: 7)
+                                Text("LIVE")
+                                    .font(.system(size: 11, weight: .black))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                    }
+
+                    Spacer()
                 }
             }
             .padding(.horizontal, 16)
@@ -768,45 +768,71 @@ struct HomeView: View {
                 if isSearching {
                     HStack {
                         Spacer()
-                        ProgressView()
-                            .tint(Color.snapshePurple)
-                            .padding(24)
+                        ProgressView().tint(Color.snapshePurple).padding(24)
                         Spacer()
                     }
-                } else if searchResults.isEmpty {
+                } else if searchResults.isEmpty && brandResults.isEmpty {
                     VStack(spacing: 12) {
                         Spacer(minLength: 40)
-
-                        Image(systemName: "person.slash")
+                        Image(systemName: "magnifyingglass")
                             .font(.system(size: 40))
                             .foregroundStyle(Color(hex: "#ddd"))
-
-                        Text("No users found")
+                        Text("No results found")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(Color(hex: "#aaa"))
-
-                        Text("Try a different name or username.")
+                        Text("Try a different name, username, or brand.")
                             .font(.system(size: 14))
                             .foregroundStyle(Color(hex: "#ccc"))
+                            .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(40)
                 } else {
-                    Text("Results")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(hex: "#aaa"))
-                        .padding(.horizontal, 18)
-                        .padding(.top, 14)
-                        .padding(.bottom, 6)
+                    // ── Brand results ─────────────────────────────
+                    if !brandResults.isEmpty {
+                        Text("Brands")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(hex: "#aaa"))
+                            .padding(.horizontal, 18)
+                            .padding(.top, 14)
+                            .padding(.bottom, 8)
 
-                    ForEach(searchResults) { user in
-                        UserSearchRow(user: user)
-                        Divider().padding(.horizontal, 18)
+                        ForEach(brandResults) { brand in
+                            BrandSearchRow(
+                                brand: brand,
+                                styleVM: styleVM,
+                                currentUsername: auth.currentUser?.username ?? "",
+                                onOpenBrand: { brandPageSheet = brand.name }
+                            )
+                            Divider().padding(.horizontal, 18)
+                        }
+                    }
+
+                    // ── User results ──────────────────────────────
+                    if !searchResults.isEmpty {
+                        Text("Users")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(hex: "#aaa"))
+                            .padding(.horizontal, 18)
+                            .padding(.top, 14)
+                            .padding(.bottom, 6)
+
+                        ForEach(searchResults) { user in
+                            UserSearchRow(user: user)
+                            Divider().padding(.horizontal, 18)
+                        }
                     }
                 }
             }
         }
         .background(Color.white)
+        .sheet(item: Binding(
+            get: { brandPageSheet.map { IdentifiableString(value: $0) } },
+            set: { if $0 == nil { brandPageSheet = nil } }
+        )) { item in
+            BrandPageView(brandName: item.value, posts: styleVM.posts)
+                .environmentObject(auth)
+        }
     }
 
     var emptyStateView: some View {
@@ -1011,9 +1037,24 @@ struct HomeView: View {
 
     func performSearch(_ q: String) async {
         isSearching = true
-        let r = try? await APIService.shared.searchUsers(query: q, token: auth.token)
-        searchResults = r?.users ?? []
+
+        // Parallel: user search + brand search
+        async let userFetch = APIService.shared.searchUsers(query: q, token: auth.token)
+        async let brandFetch = searchBrands(q)
+
+        let (userResult, brands) = await (try? userFetch, brandFetch)
+        searchResults = userResult?.users ?? []
+        brandResults  = brands
+
         isSearching = false
+    }
+
+    func searchBrands(_ q: String) async -> [BrandSearchResult] {
+        let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
+        guard let url = URL(string: "\(APIService.baseURL)/api/brand-search.php?q=\(encoded)") else { return [] }
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let arr = try? JSONDecoder().decode([BrandSearchResult].self, from: data) else { return [] }
+        return arr
     }
 
     private func makeServerPath(from url: URL) -> String? {
@@ -1071,6 +1112,138 @@ struct UserSearchRow: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $showProfile) {
             PublicProfileView(username: user.username)
+        }
+    }
+}
+
+// MARK: - BrandSearchResult model
+
+struct BrandSearchResult: Identifiable, Decodable {
+    var id: String { domain.isEmpty ? name : domain }
+    let name: String
+    let domain: String
+    let icon: String
+    let verified: Bool
+
+    var iconURL: URL? { URL(string: icon) }
+}
+
+// MARK: - BrandSearchRow
+
+struct BrandSearchRow: View {
+    let brand: BrandSearchResult
+    let styleVM: StyleFeedViewModel
+    let currentUsername: String
+    let onOpenBrand: () -> Void
+
+    @EnvironmentObject var auth: AuthManager
+    @State private var showNewPost = false
+
+    var postCount: Int {
+        styleVM.posts.filter { $0.brandTags.contains { $0.name == brand.name } }.count
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── Main row ──────────────────────────────────────
+            Button(action: onOpenBrand) {
+                HStack(spacing: 14) {
+                    // Logo
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(LinearGradient(
+                                colors: [Color.snapshePurple.opacity(0.10), Color.snapshePink.opacity(0.10)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 48, height: 48)
+
+                        AsyncImage(url: brand.iconURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable()
+                                    .scaledToFit()
+                                    .frame(width: 32, height: 32)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            default:
+                                Image(systemName: "tag.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(Color.snapshePurple)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(brand.name)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Color.snapsheBlack)
+
+                            if brand.verified {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 8, weight: .black))
+                                        .foregroundStyle(.white)
+                                    Text("Verified")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.snapshePurple)
+                                .clipShape(Capsule())
+                            }
+                        }
+
+                        Text(postCount > 0
+                            ? "\(postCount) style post\(postCount != 1 ? "s" : "")"
+                            : brand.domain)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: "#888"))
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color(hex: "#ccc"))
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+
+            // ── "Share a look" CTA ────────────────────────────
+            Button { showNewPost = true } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Share a look with \(brand.name)")
+                        .font(.system(size: 13, weight: .bold))
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundStyle(Color.snapshePurple)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(Color.snapshePurple.opacity(0.07))
+            }
+            .buttonStyle(.plain)
+        }
+        .sheet(isPresented: $showNewPost) {
+            NewStylePostView { image, caption, tags, username in
+                var finalTags = tags
+                if !finalTags.contains(where: { $0.name == brand.name }) {
+                    finalTags.insert(BrandTag(name: brand.name, category: ""), at: 0)
+                }
+                styleVM.addPost(
+                    image: image,
+                    caption: caption,
+                    brandTags: finalTags,
+                    username: username,
+                    avatarURL: auth.currentUser?.avatarURL?.absoluteString ?? auth.currentUser?.avatar ?? ""
+                )
+            }
+            .environmentObject(auth)
         }
     }
 }
@@ -3687,87 +3860,281 @@ struct BrandPostItem: View {
 // MARK: - BrandPageView
 
 
+// MARK: - BrandPage Models
+
+struct BrandCoupon: Identifiable {
+    let id = UUID()
+    let code: String
+    let description: String
+    let discount: String
+    let expiresAt: String
+    let storeUrl: String
+}
+
+struct BrandProduct: Identifiable {
+    let id = UUID()
+    let name: String
+    let brand: String
+    let merchant: String
+    let price: String
+    let currency: String
+    let image: String
+    let url: String
+
+    var thumbnailURL: URL? { URL(string: image) }
+    var displayPrice: String {
+        guard !price.isEmpty else { return "" }
+        let sym = currency == "USD" ? "$" : (currency == "EUR" ? "€" : (currency == "GBP" ? "£" : currency + " "))
+        if let v = Double(price) {
+            return String(format: "\(sym)%.2f", v)
+        }
+        return "\(sym)\(price)"
+    }
+}
+
+// MARK: - BrandPageViewModel
+
+@MainActor
+class BrandPageViewModel: ObservableObject {
+    @Published var coupons: [BrandCoupon] = []
+    @Published var products: [BrandProduct] = []
+    @Published var isLoadingCoupons = false
+    @Published var isLoadingProducts = false
+    @Published var couponsError: String? = nil
+    @Published var productsError: String? = nil
+    @Published var productsEnabled = true
+
+    func loadCoupons(brandName: String) async {
+        let domain = brandName.lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "&", with: "and") + ".com"
+        guard let url = URL(string: "\(APIService.baseURL)/api_mobile/coupons.php?site=\(domain)") else { return }
+        isLoadingCoupons = true
+        couponsError = nil
+        defer { isLoadingCoupons = false }
+
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ok = json["ok"] as? Bool, ok else {
+            couponsError = "No coupons found for this brand."
+            return
+        }
+
+        var result: [BrandCoupon] = []
+        let rawList = json["coupons"] as? [[String: Any]] ?? []
+        for c in rawList {
+            let code = c["code"] as? String ?? ""
+            let desc = c["description"] as? String ?? c["title"] as? String ?? ""
+            let discount = c["discount"] as? String ?? c["value"] as? String ?? ""
+            let exp = c["expires_at"] as? String ?? c["expiry"] as? String ?? ""
+            let store = c["store_url"] as? String ?? c["url"] as? String ?? ""
+            if desc.isEmpty && code.isEmpty { continue }
+            result.append(BrandCoupon(code: code, description: desc, discount: discount, expiresAt: exp, storeUrl: store))
+        }
+        coupons = result
+        if result.isEmpty { couponsError = "No active coupons right now." }
+    }
+
+    func loadProducts(brandName: String) async {
+        let encodedBrand = brandName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? brandName
+        guard let url = URL(string: "\(APIService.baseURL)/api/rakuten-products.php?brand=\(encodedBrand)") else { return }
+        isLoadingProducts = true
+        productsError = nil
+        defer { isLoadingProducts = false }
+
+        guard let (data, _) = try? await URLSession.shared.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            productsError = "Could not load products."
+            return
+        }
+
+        if let enabled = json["enabled"] as? Bool, !enabled {
+            productsEnabled = false
+            return
+        }
+
+        let ok = json["ok"] as? Bool ?? false
+        guard ok else {
+            productsError = json["error"] as? String ?? "Products not available."
+            return
+        }
+
+        let rawList = json["products"] as? [[String: Any]] ?? []
+        products = rawList.compactMap { p in
+            let name = p["name"] as? String ?? ""
+            let url  = p["url"]  as? String ?? ""
+            guard !name.isEmpty, !url.isEmpty else { return nil }
+            return BrandProduct(
+                name: name,
+                brand: p["brand"] as? String ?? brandName,
+                merchant: p["merchant"] as? String ?? "",
+                price: p["price"] as? String ?? "",
+                currency: p["currency"] as? String ?? "USD",
+                image: p["image"] as? String ?? "",
+                url: url
+            )
+        }
+        if products.isEmpty { productsError = "No products found for this brand." }
+    }
+}
+
+// MARK: - BrandPageView (3-tab: Style Posts · Coupons · Products)
+
 struct BrandPageView: View {
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var auth: AuthManager
     let brandName: String
     let posts: [StylePost]
+
+    @StateObject private var vm = BrandPageViewModel()
+    @State private var selectedTab: BrandTab = .stylePosts
+
+    enum BrandTab { case stylePosts, coupons, products }
 
     var brandPosts: [StylePost] {
         posts.filter { $0.brandTags.contains { $0.name == brandName } }
     }
 
+    var brandDomain: String {
+        brandName.lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "&", with: "and") + ".com"
+    }
+
+    var logoURL: URL? {
+        URL(string: "https://cdn.brandfetch.io/domain/\(brandDomain)/h/160/w/160/icon.png?c=1idTepj4w4y1xlCSbo_")
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    // Brand header
-                    VStack(spacing: 10) {
-                        // Brandfetch logo
-                        let domain = brandName.lowercased()
-                            .replacingOccurrences(of: " ", with: "")
-                            .replacingOccurrences(of: "&", with: "and") + ".com"
-                        let logoURL = URL(string: "https://cdn.brandfetch.io/domain/\(domain)/h/160/w/160/icon.png?c=1idTepj4w4y1xlCSbo_")
+            VStack(spacing: 0) {
 
-                        ZStack {
-                            Circle()
-                                .fill(LinearGradient(
-                                    colors: [Color.snapshePurple.opacity(0.12), Color.snapshePink.opacity(0.12)],
-                                    startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .frame(width: 88, height: 88)
+                // ── Brand header ─────────────────────────────────────
+                VStack(spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                colors: [Color.snapshePurple.opacity(0.12), Color.snapshePink.opacity(0.12)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .frame(width: 88, height: 88)
 
-                            AsyncImage(url: logoURL) { phase in
-                                switch phase {
-                                case .success(let img):
-                                    img.resizable()
-                                        .scaledToFit()
-                                        .frame(width: 60, height: 60)
-                                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                                default:
-                                    Image(systemName: "tag.fill")
-                                        .font(.system(size: 32))
-                                        .foregroundStyle(Color.snapshePurple)
-                                }
+                        AsyncImage(url: logoURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable()
+                                    .scaledToFit()
+                                    .frame(width: 60, height: 60)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                            default:
+                                Image(systemName: "tag.fill")
+                                    .font(.system(size: 32))
+                                    .foregroundStyle(Color.snapshePurple)
                             }
                         }
-
-                        Text(brandName)
-                            .font(.system(size: 26, weight: .black))
-                            .foregroundStyle(Color.snapsheBlack)
-
-                        Text("\(brandPosts.count) style post\(brandPosts.count != 1 ? "s" : "")")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color(hex: "#888"))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 7)
-                            .background(Color.snapsheGray)
-                            .clipShape(Capsule())
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
 
-                    if brandPosts.isEmpty {
-                        VStack(spacing: 14) {
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .font(.system(size: 36))
-                                .foregroundStyle(Color(hex: "#DDD"))
-                            Text("No one has tagged this brand yet")
-                                .font(.system(size: 14))
-                                .foregroundStyle(Color(hex: "#AAA"))
+                    Text(brandName)
+                        .font(.system(size: 24, weight: .black))
+                        .foregroundStyle(Color.snapsheBlack)
+
+                    // Verified badge + Shop Online button
+                    HStack(spacing: 8) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(.white)
+                            Text("Verified Brand")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
                         }
-                        .padding(40)
-                    } else {
-                        // Single column — full images, no crop
-                        LazyVStack(spacing: 12) {
-                            ForEach(brandPosts) { post in
-                                BrandPostItem(post: post)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.snapshePurple)
+                        .clipShape(Capsule())
+
+                        Button {
+                            if let url = URL(string: "https://\(brandDomain)") {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "bag")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("Shop Online")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.snapsheBlack)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    // Stats row
+                    HStack(spacing: 20) {
+                        VStack(spacing: 2) {
+                            Text("\(brandPosts.count)")
+                                .font(.system(size: 16, weight: .black))
+                                .foregroundStyle(Color.snapsheBlack)
+                            Text("style posts")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color(hex: "#999"))
+                        }
+                        if !vm.coupons.isEmpty {
+                            VStack(spacing: 2) {
+                                Text("\(vm.coupons.count)")
+                                    .font(.system(size: 16, weight: .black))
+                                    .foregroundStyle(Color.snapsheBlack)
+                                Text("coupons")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color(hex: "#999"))
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 24)
+                        if !vm.products.isEmpty {
+                            VStack(spacing: 2) {
+                                Text("\(vm.products.count)")
+                                    .font(.system(size: 16, weight: .black))
+                                    .foregroundStyle(Color.snapsheBlack)
+                                Text("products")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Color(hex: "#999"))
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 20)
+                .padding(.bottom, 16)
+                .background(Color.white)
+
+                // ── 3-tab picker ─────────────────────────────────────
+                HStack(spacing: 0) {
+                    brandTabButton(icon: "photo.on.rectangle", title: "Style Posts",
+                                   badge: brandPosts.count, tab: .stylePosts)
+                    brandTabButton(icon: "tag.fill", title: "Coupons",
+                                   badge: vm.coupons.count, tab: .coupons)
+                    brandTabButton(icon: "bag.fill", title: "Products",
+                                   badge: vm.products.count, tab: .products)
+                }
+                .padding(.horizontal, 16)
+                .background(Color.white)
+
+                Divider()
+
+                // ── Tab content ──────────────────────────────────────
+                ScrollView(showsIndicators: false) {
+                    switch selectedTab {
+                    case .stylePosts: stylePostsTab
+                    case .coupons:   couponsTab
+                    case .products:  productsTab
                     }
                 }
+                .background(Color(hex: "#F8F8F8"))
             }
-            .navigationTitle(brandName)
+            .background(Color.white)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -3777,8 +4144,427 @@ struct BrandPageView: View {
                             .foregroundStyle(Color.snapsheBlack)
                     }
                 }
+                ToolbarItem(placement: .principal) {
+                    Text(brandName)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.snapsheBlack)
+                }
             }
         }
+        .task {
+            async let c: () = vm.loadCoupons(brandName: brandName)
+            async let p: () = vm.loadProducts(brandName: brandName)
+            _ = await (c, p)
+        }
+    }
+
+    // MARK: - Tab button
+
+    func brandTabButton(icon: String, title: String, badge: Int, tab: BrandTab) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 5) {
+                HStack(spacing: 4) {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .bold))
+                    Text(title)
+                        .font(.system(size: 13, weight: selectedTab == tab ? .bold : .regular))
+                    if badge > 0 {
+                        Text("\(badge)")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundStyle(selectedTab == tab ? .white : Color(hex: "#999"))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(selectedTab == tab ? Color.snapshePurple : Color(hex: "#E0E0E0"))
+                            .clipShape(Capsule())
+                    }
+                }
+                .foregroundStyle(selectedTab == tab ? Color.snapsheBlack : Color(hex: "#999"))
+
+                Rectangle()
+                    .fill(selectedTab == tab ? Color.snapshePurple : Color.clear)
+                    .frame(height: 2)
+                    .clipShape(Capsule())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Style Posts Tab
+
+    var stylePostsTab: some View {
+        Group {
+            if brandPosts.isEmpty {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.system(size: 44))
+                        .foregroundStyle(Color(hex: "#DDD"))
+                    Text("No style posts yet")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Color(hex: "#AAA"))
+                    Text("Be the first to tag \(brandName)!")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(hex: "#BBB"))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 40)
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(brandPosts) { post in
+                        BrandPostItem(post: post)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
+    // MARK: - Coupons Tab
+
+    var couponsTab: some View {
+        Group {
+            if vm.isLoadingCoupons {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    ProgressView().tint(Color.snapshePurple)
+                    Text("Loading coupons…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(hex: "#888"))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if vm.coupons.isEmpty {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    Image(systemName: "tag.slash")
+                        .font(.system(size: 44))
+                        .foregroundStyle(Color(hex: "#DDD"))
+                    Text(vm.couponsError ?? "No active coupons")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color(hex: "#AAA"))
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 40)
+            } else {
+                VStack(spacing: 0) {
+                    // Header
+                    HStack(spacing: 6) {
+                        Image(systemName: "gift.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.snapshePurple)
+                        Text("\(vm.coupons.count) active coupon\(vm.coupons.count != 1 ? "s" : "") for \(brandName)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.snapshePurple)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.snapshePurple.opacity(0.07))
+
+                    LazyVStack(spacing: 12) {
+                        ForEach(vm.coupons) { coupon in
+                            BrandCouponCard(coupon: coupon, brandName: brandName)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+            }
+        }
+    }
+
+    // MARK: - Products Tab
+
+    var productsTab: some View {
+        Group {
+            if !vm.productsEnabled {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    Image(systemName: "bag.badge.questionmark")
+                        .font(.system(size: 44))
+                        .foregroundStyle(Color(hex: "#DDD"))
+                    Text("Product shopping not available")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color(hex: "#AAA"))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if vm.isLoadingProducts {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    ProgressView().tint(Color.snapshePurple)
+                    Text("Loading \(brandName) products…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color(hex: "#888"))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if vm.products.isEmpty {
+                VStack(spacing: 14) {
+                    Spacer(minLength: 60)
+                    Image(systemName: "bag")
+                        .font(.system(size: 44))
+                        .foregroundStyle(Color(hex: "#DDD"))
+                    Text(vm.productsError ?? "No products found")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color(hex: "#AAA"))
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 40)
+            } else {
+                VStack(spacing: 0) {
+                    // Header
+                    HStack(spacing: 6) {
+                        Image(systemName: "bag.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.snapshePurple)
+                        Text("Shop \(brandName) Products")
+                            .font(.system(size: 14, weight: .black))
+                            .foregroundStyle(Color.snapsheBlack)
+                        Spacer()
+                        Text("\(vm.products.count) items")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: "#999"))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
+
+                    Text("We earn a commission when you follow the link to make a purchase.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(hex: "#BBB"))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+
+                    LazyVGrid(
+                        columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                        spacing: 14
+                    ) {
+                        ForEach(vm.products) { product in
+                            BrandProductCard(product: product)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - BrandCouponCard
+
+struct BrandCouponCard: View {
+    let coupon: BrandCoupon
+    let brandName: String
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Top row: discount badge + description
+            HStack(alignment: .top, spacing: 12) {
+                if !coupon.discount.isEmpty {
+                    Text(coupon.discount)
+                        .font(.system(size: 18, weight: .black))
+                        .foregroundStyle(Color.snapshePurple)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.snapshePurple.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .fixedSize()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(coupon.description.isEmpty ? "Special offer" : coupon.description)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.snapsheBlack)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !coupon.expiresAt.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 10))
+                            Text("Expires: \(coupon.expiresAt)")
+                                .font(.system(size: 11))
+                        }
+                        .foregroundStyle(Color(hex: "#999"))
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            Divider().padding(.horizontal, 14)
+
+            // Code row
+            HStack(spacing: 10) {
+                if !coupon.code.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "scissors")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.snapshePurple)
+                        Text(coupon.code)
+                            .font(.system(size: 14, weight: .black, design: .monospaced))
+                            .foregroundStyle(Color.snapshePurple)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.snapshePurple.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                            .foregroundStyle(Color.snapshePurple.opacity(0.4))
+                    )
+
+                    Button {
+                        UIPasteboard.general.string = coupon.code
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copied = false }
+                    } label: {
+                        Text(copied ? "Copied!" : "Copy")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(copied ? Color.green : Color.snapsheBlack)
+                            .clipShape(Capsule())
+                            .animation(.easeInOut(duration: 0.2), value: copied)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Spacer()
+                }
+
+                if !coupon.storeUrl.isEmpty {
+                    Button {
+                        if let url = URL(string: coupon.storeUrl.hasPrefix("http") ? coupon.storeUrl : "https://\(coupon.storeUrl)") {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Go to store")
+                                .font(.system(size: 13, weight: .bold))
+                        }
+                        .foregroundStyle(Color.snapshePurple)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.snapshePurple.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.snapsheBlack.opacity(0.06), radius: 8, y: 2)
+    }
+}
+
+// MARK: - BrandProductCard
+
+struct BrandProductCard: View {
+    let product: BrandProduct
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .bottomTrailing) {
+                AsyncImage(url: product.thumbnailURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                            .scaledToFill()
+                            .frame(height: 160)
+                            .clipped()
+                    case .failure:
+                        Color.snapsheGray
+                            .frame(height: 160)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .foregroundStyle(Color(hex: "#BBB"))
+                                    .font(.system(size: 28))
+                            )
+                    default:
+                        Color.snapsheGray
+                            .frame(height: 160)
+                            .shimmering()
+                    }
+                }
+                .frame(height: 160)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let url = URL(string: product.url), !product.url.isEmpty {
+                        UIApplication.shared.open(url)
+                    }
+                }
+
+                if !product.displayPrice.isEmpty {
+                    Text(product.displayPrice)
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.snapsheBlack.opacity(0.85))
+                        .clipShape(Capsule())
+                        .padding(8)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                if !product.merchant.isEmpty {
+                    Text(product.merchant)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.snapshePurple)
+                        .lineLimit(1)
+                }
+                Text(product.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.snapsheBlack)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    if let url = URL(string: product.url), !product.url.isEmpty {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bag.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Shop Now")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 32)
+                    .background(Color.snapsheBlack)
+                    .clipShape(Capsule())
+                }
+                .padding(.top, 4)
+            }
+            .padding(10)
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.snapsheBlack.opacity(0.07), radius: 8, y: 2)
     }
 }
 
@@ -3857,6 +4643,7 @@ struct NewStylePostView: View {
     // Caption
     @State private var caption = ""
     @FocusState private var captionFocused: Bool
+    @State private var hasPosted = false
 
     var displayImage: UIImage? { filteredImage ?? rawImage }
     var canShare: Bool { displayImage != nil && !brandTags.isEmpty }
@@ -4284,7 +5071,8 @@ struct NewStylePostView: View {
 
                 // Share button
                 Button {
-                    guard let img = displayImage else { return }
+                    guard !hasPosted, let img = displayImage else { return }
+                    hasPosted = true
                     onPost(img, caption, brandTags, auth.currentUser?.username ?? "me")
                     dismiss()
                 } label: {
